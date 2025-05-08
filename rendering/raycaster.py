@@ -1,21 +1,26 @@
 import math
 from OpenGL.GL import *
 from OpenGL.GLU import gluLookAt
-from settings import *
-from map import MAP_WIDTH, MAP_HEIGHT, MAP_DEPTH  # include depth now
+from utils.settings import *
+from world.map import MAP_WIDTH, MAP_HEIGHT, MAP_DEPTH  # include depth now
 
 
 class Raycaster:
+
+    """
+    Raycaster class for rendering the game world.
+    
+    """
     def __init__(self, player, game_map):
         self.player = player
         self.map = game_map
-        map_center_x = MAP_WIDTH * TILE / 2
-        map_center_y = MAP_HEIGHT * TILE / 2
+        map_center_x = MAP_WIDTH * TILE_SIZE_M / 2
+        map_center_y = MAP_HEIGHT * TILE_SIZE_M / 2
         self.light_pos = (map_center_x, map_center_y)
         self.ray_cosines = [math.cos(-FOV/2 + i * DELTA_ANGLE) for i in range(NUM_RAYS)]
 
     def cast_ray(self, angle):
-        ox, oz = self.player.x / TILE, self.player.y / TILE
+        ox, oz = self.player.x / TILE_SIZE_M, self.player.y / TILE_SIZE_M
         map_x, map_z = int(ox), int(oz)
 
         sin_a = math.sin(angle)
@@ -45,20 +50,26 @@ class Raycaster:
             if 0 <= map_x < MAP_WIDTH and 0 <= map_z < MAP_DEPTH:
                 for y in range(MAP_HEIGHT):
                     if self.map[map_z][y][map_x] == 1:
-                        return hit_distance * TILE, wall_side
+                        return hit_distance * TILE_SIZE_M, wall_side
 
         return MAX_DEPTH, 'none'
 
     def draw_3d_floor_grid(self):
         glColor3f(0.0, 1.0, 0.0)
         glBegin(GL_LINES)
-        for z in range(0, MAP_DEPTH * TILE, TILE):
-            glVertex3f(0, 0, z)
-            glVertex3f(MAP_WIDTH * TILE, 0, z)
-        for x in range(0, MAP_WIDTH * TILE, TILE):
-            glVertex3f(x, 0, 0)
-            glVertex3f(x, 0, MAP_DEPTH * TILE)
+
+        for z in range(MAP_DEPTH):
+            z_pos = z * TILE_SIZE_M
+            glVertex3f(0, 0, z_pos)
+            glVertex3f(MAP_WIDTH * TILE_SIZE_M, 0, z_pos)
+
+        for x in range(MAP_WIDTH):
+            x_pos = x * TILE_SIZE_M
+            glVertex3f(x_pos, 0, 0)
+            glVertex3f(x_pos, 0, MAP_DEPTH * TILE_SIZE_M)
+
         glEnd()
+
 
     def draw_light_source(self):
         light_screen_x = WIDTH // 2
@@ -74,9 +85,10 @@ class Raycaster:
             for y in range(MAP_HEIGHT):
                 for x in range(MAP_WIDTH):
                     if self.map[z][y][x] == 1:
-                        self.draw_wall_cube(x * TILE, y * TILE, z * TILE)
+                        self.draw_wall_cube(x * TILE_SIZE_M, y * TILE_SIZE_M, z * TILE_SIZE_M
+)
 
-    def draw_wall_cube(self, x, y, z, size=TILE):
+    def draw_wall_cube(self, x, y, z, size=TILE_SIZE_M):
         glColor3f(0.5, 0.5, 0.5)
         glBegin(GL_QUADS)
 
@@ -135,7 +147,59 @@ class Raycaster:
             cam_x + dir_x, cam_y + dir_y, cam_z + dir_z,
             0, 1, 0
         )
-
+        self.draw_sky(player_angle=self.player.angle)
         self.draw_3d_floor_grid()
         self.draw_wall_blocks()
         self.draw_light_source()
+
+    def draw_textured_floor(self):
+        glBindTexture(GL_TEXTURE_2D, self.floor_texture_id)
+        glBegin(GL_QUADS)
+        glColor3f(1, 1, 1)
+
+        for z in range(MAP_DEPTH):
+            for x in range(MAP_WIDTH):
+                glTexCoord2f(0, 0); glVertex3f(x * TILE_SIZE_M, 0, z * TILE_SIZE_M)
+                glTexCoord2f(1, 0); glVertex3f((x + 1) * TILE_SIZE_M, 0, z * TILE_SIZE_M)
+                glTexCoord2f(1, 1); glVertex3f((x + 1) * TILE_SIZE_M, 0, (z + 1) * TILE_SIZE_M)
+                glTexCoord2f(0, 1); glVertex3f(x * TILE_SIZE_M, 0, (z + 1) * TILE_SIZE_M)
+
+        glEnd()
+
+
+    def draw_sky(self, player_angle):
+        glDisable(GL_DEPTH_TEST)
+        glPushMatrix()
+
+        glRotatef(-math.degrees(player_angle), 0, 1, 0)
+
+        glColor3f(0.435, 0.608, 1)
+        slices = 32
+        stacks = 16
+        radius = 2000
+        vertical_offset = -1250  
+
+        for i in range(stacks // 2):
+            lat0 = math.pi * i / stacks / 2
+            lat1 = math.pi * (i + 1) / stacks / 2
+            y0 = radius * math.cos(lat0) + vertical_offset
+            y1 = radius * math.cos(lat1) + vertical_offset
+            r0 = radius * math.sin(lat0)
+            r1 = radius * math.sin(lat1)
+
+            glBegin(GL_QUAD_STRIP)
+            for j in range(slices + 1):
+                lon = 2 * math.pi * j / slices
+                x0 = r0 * math.cos(lon)
+                z0 = r0 * math.sin(lon)
+                x1 = r1 * math.cos(lon)
+                z1 = r1 * math.sin(lon)
+
+                glVertex3f(x0, y0, z0)
+                glVertex3f(x1, y1, z1)
+            glEnd()
+
+        glPopMatrix()
+        glEnable(GL_DEPTH_TEST)
+
+

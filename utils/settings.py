@@ -1,12 +1,16 @@
+"""
+File that contains all the settings for the game.
+"""
+
 import math
 
 # Screen settings
 WIDTH = 800
 HEIGHT = 600
 FPS = 60
-
+RENDER_DISTANCE = 5000  
 # Map settings
-TILE = 64  # each map square is 64x64 pixels
+TILE_SIZE_M = 1.0  
 
 # Raycasting settings
 FOV = 60 * (3.14 / 180)  # convert degrees to radians
@@ -14,12 +18,12 @@ NUM_RAYS = WIDTH // 2
 MAX_DEPTH = 800
 DELTA_ANGLE = FOV / NUM_RAYS
 DIST = NUM_RAYS / (2 * math.tan(FOV / 2))
-PROJ_COEFF = 3 * DIST * TILE
+PROJ_COEFF = 3 * DIST * TILE_SIZE_M
 SCALE = WIDTH // NUM_RAYS
 
 # Player settings
-PLAYER_SPEED = 2
-ROT_SPEED = 0.03
+PLAYER_SPEED = 3
+ROT_SPEED = 3
 
 # Colors
 BLACK = (0, 0, 0)

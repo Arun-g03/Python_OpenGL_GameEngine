@@ -1,25 +1,28 @@
 import pygame
 import math
-from settings import *
-from map import game_map, MAP_HEIGHT, MAP_WIDTH, MAP_DEPTH
+from utils.settings import *
+from world.map import game_map, MAP_HEIGHT, MAP_WIDTH, MAP_DEPTH
 
 class Player:
+    """
+    Base player class
+    """
     def __init__(self):
-        self.x = TILE * 1.5
-        self.y = TILE * 1.5
+        self.x = TILE_SIZE_M * 1.5
+        self.y = TILE_SIZE_M * 1.5
         self.angle = 0
         self.pitch = 0  # in radians
         self.vertical_offset = 0  # for looking up/down
-        self.eye_height = TILE * 0.5  # about halfway up a tile
+        self.eye_height = TILE_SIZE_M * 0.5  # about halfway up a tile
 
         pygame.mouse.set_visible(False)
         pygame.event.set_grab(True)
 
-    def movement(self):
+    def movement(self, delta_time):
         keys = pygame.key.get_pressed()
 
         dx, dy = 0, 0
-        speed = PLAYER_SPEED
+        speed = PLAYER_SPEED * delta_time
         sin_a = math.sin(self.angle)
         cos_a = math.cos(self.angle)
 
@@ -38,8 +41,9 @@ class Player:
 
         self.check_wall_collision(dx, dy)
 
+
     def check_wall_collision(self, dx, dy):
-        scale = 10  # prevent clipping too close to wall
+        scale = 0.1  # prevent clipping too close to wall
 
         next_x = self.x + dx
         next_y = self.y + dy
@@ -53,8 +57,8 @@ class Player:
             self.y = next_y
 
     def is_wall(self, x, z):
-        i = int(x / TILE)
-        k = int(z / TILE)
+        i = int(x / TILE_SIZE_M)
+        k = int(z / TILE_SIZE_M)
         y = 0  # collision at ground level
 
         if 0 <= i < MAP_WIDTH and 0 <= y < MAP_HEIGHT and 0 <= k < MAP_DEPTH:
@@ -73,6 +77,7 @@ class Player:
             
 
 
-    def update(self):
-        self.movement()
+    def update(self, delta_time):
+        self.movement(delta_time)
         self.mouse_control()
+

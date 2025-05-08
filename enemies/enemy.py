@@ -1,6 +1,6 @@
 import pygame
 import math
-from settings import *
+from utils.settings import *
 
 class Enemy:
     def __init__(self, x, y, spritesheet):

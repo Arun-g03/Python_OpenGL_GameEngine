@@ -5,7 +5,9 @@ TILE = 64
 
 # Create 3D empty map: depth (Z), height (Y), width (X)
 game_map = [[[0 for _ in range(MAP_WIDTH)] for _ in range(MAP_HEIGHT)] for _ in range(MAP_DEPTH)]
-
+"""
+Starting logic for creating map
+"""
 # Floor (Z=0) outer walls
 for x in range(MAP_WIDTH):
     game_map[0][0][x] = 1
