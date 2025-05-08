@@ -4,9 +4,12 @@ import pygame
 
 class PauseMenu:
     def __init__(self):
+        self.font = pygame.font.SysFont("Arial", 48)
         self.buttons = [
             {"label": "Resume Game", "rect": pygame.Rect(WIDTH // 2 - 100, 200, 200, 60)},
-            {"label": "Enter Editor", "rect": pygame.Rect(WIDTH // 2 - 100, 300, 200, 60)},
+            {"label": "Game Mode", "rect": pygame.Rect(WIDTH // 2 - 100, 280, 200, 60)},
+            {"label": "Editor Mode", "rect": pygame.Rect(WIDTH // 2 - 100, 360, 200, 60)},
+            {"label": "Main Menu", "rect": pygame.Rect(WIDTH // 2 - 100, 440, 200, 60)}
         ]
 
     def draw(self):
@@ -44,6 +47,9 @@ class PauseMenu:
             glVertex2f(rect.left, rect.bottom)
             glEnd()
 
+            # Render text label
+            self.draw_text_label(button["label"], button["rect"].center)
+
         # Cleanup and restore
         glPopMatrix()
         glMatrixMode(GL_PROJECTION)
@@ -52,3 +58,42 @@ class PauseMenu:
 
         glDisable(GL_BLEND)
         glEnable(GL_DEPTH_TEST)
+
+    def handle_click(self, pos):
+        for i, button in enumerate(self.buttons):
+            if button["rect"].collidepoint(pos):
+                if i == 0:  # Resume Game
+                    return "resume"
+                elif i == 1:  # Game Mode
+                    return "game"
+                elif i == 2:  # Editor Mode
+                    return "editor"
+                elif i == 3:  # Main Menu
+                    return "menu"
+        return None
+
+    def draw_text_label(self, text, center):
+        # Render Pygame text surface
+        text_surface = self.font.render(text, True, (255, 255, 255), (0, 0, 0, 0))
+        text_data = pygame.image.tostring(text_surface, "RGBA", True)
+        width, height = text_surface.get_size()
+
+        # Generate OpenGL texture
+        tex_id = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, tex_id)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, text_data)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+
+        # Draw textured quad
+        x, y = center[0] - width // 2, center[1] - height // 2
+        glEnable(GL_TEXTURE_2D)
+        glColor4f(1, 1, 1, 1)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 1); glVertex2f(x, y)
+        glTexCoord2f(1, 1); glVertex2f(x + width, y)
+        glTexCoord2f(1, 0); glVertex2f(x + width, y + height)
+        glTexCoord2f(0, 0); glVertex2f(x, y + height)
+        glEnd()
+
+        glDeleteTextures([tex_id])
