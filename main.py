@@ -1,6 +1,7 @@
 import pygame
 import sys
 from utils.settings import *
+from utils.logger import logger
 from player.player import Player
 from rendering.raycaster import Raycaster
 from world.map import game_map
@@ -22,6 +23,8 @@ def main():
     screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.OPENGL | pygame.DOUBLEBUF)
     pygame.display.set_caption("DOOM Clone (OpenGL)")
     clock = pygame.time.Clock()
+
+    logger.log("OpenGL and Pygame initialized.")
 
     # OpenGL setup
     glViewport(0, 0, WIDTH, HEIGHT)
@@ -53,6 +56,10 @@ def main():
 
     enemy = Enemy(4 * TILE_SIZE_M, 4 * TILE_SIZE_M, enemy_sheet)
     player = Player()
+    player.x = 8
+    player.y = 8
+    logger.log(f"Player start: x={player.x}, y={player.y}")
+    logger.log(f"Map sample: {game_map[0][0][0:10]}")
     game_renderer = GameRenderer(player, game_map, floor_texture)  # NEW
     game_renderer.add_enemy(enemy)  # NEW
 
@@ -74,21 +81,27 @@ def main():
         last_mouse_pos = current_mouse_pos
 
         for event in pygame.event.get():
+            #logger.log(f"Event: {event}")
             if event.type == pygame.QUIT:
+                logger.log("Quit event received. Exiting.")
                 pygame.quit()
                 sys.exit()
 
             if state == "menu":
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     action = main_menu.handle_click(pygame.mouse.get_pos())
+                    logger.log(f"Menu action: {action}")
                     if action == "start":
                         state = "game"
                         is_paused = False
                         update_cursor(state, is_paused)
+                        logger.log("Switched to game state.")
                     elif action == "editor":
                         state = "editor"
                         update_cursor(state)
+                        logger.log("Switched to editor state.")
                     elif action == "quit":
+                        logger.log("Quit selected from menu. Exiting.")
                         pygame.quit()
                         sys.exit()
 
@@ -96,36 +109,46 @@ def main():
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     is_paused = not is_paused
                     update_cursor(state, is_paused)
+                    logger.log(f"Pause toggled. is_paused={is_paused}")
                 elif is_paused and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     action = pause_menu.handle_click(pygame.mouse.get_pos())
+                    logger.log(f"Pause menu action: {action}")
                     if action == "resume":
                         is_paused = False
                         update_cursor(state, is_paused)
+                        logger.log("Resumed game from pause.")
                     elif action == "game":
                         state = "game"
                         is_paused = False
                         update_cursor(state, is_paused)
+                        logger.log("Returned to game from pause menu.")
                     elif action == "editor":
                         state = "editor"
                         is_paused = False
                         update_cursor(state)
+                        logger.log("Switched to editor from pause menu.")
                     elif action == "menu":
                         state = "menu"
                         is_paused = False
                         update_cursor(state)
+                        logger.log("Returned to main menu from pause menu.")
 
             elif state == "editor":
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     state = "menu"
                     update_cursor(state)
+                    logger.log("Exited editor to main menu.")
                 elif event.type == pygame.KEYDOWN:
                     editor_renderer.handle_key(event.key)
+                    logger.log(f"Editor key: {event.key}")
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1:  # Left click
                         if not editor_renderer.handle_click(pygame.mouse.get_pos()):
                             editor_renderer.handle_block_edit(pygame.mouse.get_pos())
+                        logger.log("Editor left click.")
                     elif event.button == 3:  # Right click
                         editor_renderer.handle_block_edit(pygame.mouse.get_pos())
+                        logger.log("Editor right click.")
 
         # === RENDER ===
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -135,8 +158,8 @@ def main():
         elif state == "game":
             if not is_paused:
                 player.update(delta_time)
-                game_renderer.update(delta_time)  # NEW
-            game_renderer.render(delta_time)  # NEW
+                game_renderer.update(delta_time)
+            game_renderer.render(delta_time)
             if is_paused:
                 pause_menu.draw()
         elif state == "editor":
