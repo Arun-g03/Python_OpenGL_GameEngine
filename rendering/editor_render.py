@@ -4,16 +4,27 @@ import numpy as np
 from OpenGL.GL import *
 from OpenGL.GLU import gluLookAt, gluUnProject
 from utils.settings import *
-from world.map import game_map, MAP_WIDTH, MAP_HEIGHT, MAP_DEPTH
+from rendering.texture_loader import load_texture
+
+EDITOR_WIDTH = 32
+EDITOR_HEIGHT = 8
+EDITOR_DEPTH = 32
+
+class Entity:
+    def __init__(self, position, rotation=(0,0,0), scale=(1,1,1), type="block"):
+        self.position = np.array(position, dtype=float)
+        self.rotation = np.array(rotation, dtype=float)
+        self.scale = np.array(scale, dtype=float)
+        self.type = type
 
 class EditorCamera:
     def __init__(self):
-        self.pos = [MAP_WIDTH * TILE_SIZE_M / 2, 5.0, MAP_DEPTH * TILE_SIZE_M / 2]  # Start above center
+        self.pos = [EDITOR_WIDTH * TILE_SIZE_M / 2, 5.0, EDITOR_DEPTH * TILE_SIZE_M / 2]  # Start above center
         self.pitch = -math.pi/4  # Look down at 45 degrees
         self.yaw = 0
         self.speed = 10.0
         self.mouse_sensitivity = 0.002
-        self.selected_block = None
+        self.selected_entity = None
         self.transform_mode = "translate"  # translate, rotate, scale
         self.grid_size = 1  # Changed to integer
         self.placement_pos = None  # Position where block will be placed
@@ -52,69 +63,6 @@ class EditorCamera:
         if keys[pygame.K_LSHIFT]: self.pos = [p - u * velocity for p, u in zip(self.pos, up)]
         if keys[pygame.K_e]: self.pos = [p + u * velocity for p, u in zip(self.pos, up)]  # E for up
         if keys[pygame.K_q]: self.pos = [p - u * velocity for p, u in zip(self.pos, up)]  # Q for down
-
-        # Ray casting for block selection
-        self.update_block_selection(mouse_pos)
-
-    def update_block_selection(self, mouse_pos):
-        # Convert mouse position to normalized device coordinates
-        x = (2.0 * mouse_pos[0]) / WIDTH - 1.0
-        y = 1.0 - (2.0 * mouse_pos[1]) / HEIGHT
-        z = 1.0
-
-        # Get matrices and convert to double arrays
-        view_matrix = np.array(glGetFloatv(GL_MODELVIEW_MATRIX), dtype=np.float64)
-        proj_matrix = np.array(glGetFloatv(GL_PROJECTION_MATRIX), dtype=np.float64)
-        viewport = np.array(glGetIntegerv(GL_VIEWPORT), dtype=np.int32)
-        
-        try:
-            world_pos = gluUnProject(x, y, z, view_matrix, proj_matrix, viewport)
-            
-            # Ray direction
-            dir_x = world_pos[0] - self.pos[0]
-            dir_y = world_pos[1] - self.pos[1]
-            dir_z = world_pos[2] - self.pos[2]
-            
-            # Normalize direction
-            length = math.sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z)
-            dir_x /= length
-            dir_y /= length
-            dir_z /= length
-
-            # Ray casting
-            t = 0
-            last_empty = None
-            while t < 100:  # Max distance
-                x = int(self.pos[0] + dir_x * t)
-                y = int(self.pos[1] + dir_y * t)
-                z = int(self.pos[2] + dir_z * t)
-                
-                if 0 <= x < MAP_WIDTH and 0 <= y < MAP_HEIGHT and 0 <= z < MAP_DEPTH:
-                    if game_map[z][y][x] == 1:
-                        self.selected_block = (x, y, z)
-                        # Calculate placement position and normal
-                        if last_empty:
-                            self.placement_pos = last_empty
-                            # Calculate normal based on the direction of the ray
-                            self.placement_normal = (
-                                int(round(dir_x)),
-                                int(round(dir_y)),
-                                int(round(dir_z))
-                            )
-                        return
-                    else:
-                        last_empty = (x, y, z)
-                
-                t += 0.1
-            
-            self.selected_block = None
-            self.placement_pos = None
-            self.placement_normal = None
-        except Exception as e:
-            print(f"Error in block selection: {e}")
-            self.selected_block = None
-            self.placement_pos = None
-            self.placement_normal = None
 
     def apply_view(self):
         dir_x = math.cos(self.yaw)
@@ -160,6 +108,12 @@ class EditorRenderer:
                 "ESC - Return to menu"
             ])
         ]
+        self.floor_texture = load_texture("assets/Stone_floor.jpg")  # Load the floor texture
+        self.entities = []
+        # Create a floor of blocks (entities)
+        for x in range(EDITOR_WIDTH):
+            for z in range(EDITOR_DEPTH):
+                self.entities.append(Entity(position=(x, 0, z), type="block"))
 
     def render(self, dt, keys, mouse_dx, mouse_dy, mouse_pos):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -181,122 +135,145 @@ class EditorRenderer:
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_TEXTURE_2D)
         
-        # Draw blocks
-        for z in range(MAP_DEPTH):
-            for y in range(MAP_HEIGHT):
-                for x in range(MAP_WIDTH):
-                    if game_map[z][y][x] == 1:
-                        self.draw_block(x, y, z)
+        # Draw textured floor
+        glBindTexture(GL_TEXTURE_2D, self.floor_texture)
+        glColor3f(1, 1, 1)
+        for entity in self.entities:
+            if entity.type == "block":
+                self.draw_entity_block(entity)
 
         # Highlight selected block
-        if self.camera.selected_block:
-            x, y, z = self.camera.selected_block
-            self.draw_block_highlight(x, y, z)
+        if self.camera.selected_entity:
+            self.draw_entity_highlight(self.camera.selected_entity)
 
         # Draw placement preview
         if self.camera.placement_pos and self.tools["place"]["active"]:
-            x, y, z = self.camera.placement_pos
-            self.draw_placement_preview(x, y, z)
+            self.draw_placement_preview(self.camera.placement_pos)
 
-    def draw_block(self, x, y, z):
-        glColor3f(0.5, 0.5, 0.5)
+    def draw_entity_block(self, entity):
+        glPushMatrix()
+        glTranslatef(*entity.position)
+        glRotatef(entity.rotation[1], 0, 1, 0)
+        glRotatef(entity.rotation[0], 1, 0, 0)
+        glRotatef(entity.rotation[2], 0, 0, 1)
+        glScalef(*entity.scale)
+        glColor3f(1, 1, 1)
+        # Draw textured cube (6 faces)
         glBegin(GL_QUADS)
-        
-        # Front face
-        glVertex3f(x, y, z)
-        glVertex3f(x + 1, y, z)
-        glVertex3f(x + 1, y + 1, z)
-        glVertex3f(x, y + 1, z)
-        
-        # Back face
-        glVertex3f(x, y, z + 1)
-        glVertex3f(x + 1, y, z + 1)
-        glVertex3f(x + 1, y + 1, z + 1)
-        glVertex3f(x, y + 1, z + 1)
-        
-        # Left face
-        glVertex3f(x, y, z)
-        glVertex3f(x, y, z + 1)
-        glVertex3f(x, y + 1, z + 1)
-        glVertex3f(x, y + 1, z)
-        
-        # Right face
-        glVertex3f(x + 1, y, z)
-        glVertex3f(x + 1, y, z + 1)
-        glVertex3f(x + 1, y + 1, z + 1)
-        glVertex3f(x + 1, y + 1, z)
-        
-        # Top face
-        glVertex3f(x, y + 1, z)
-        glVertex3f(x + 1, y + 1, z)
-        glVertex3f(x + 1, y + 1, z + 1)
-        glVertex3f(x, y + 1, z + 1)
-        
-        # Bottom face
-        glVertex3f(x, y, z)
-        glVertex3f(x + 1, y, z)
-        glVertex3f(x + 1, y, z + 1)
-        glVertex3f(x, y, z + 1)
-        
+        # Front
+        glTexCoord2f(0, 0); glVertex3f(0, 0, 0)
+        glTexCoord2f(1, 0); glVertex3f(1, 0, 0)
+        glTexCoord2f(1, 1); glVertex3f(1, 1, 0)
+        glTexCoord2f(0, 1); glVertex3f(0, 1, 0)
+        # Back
+        glTexCoord2f(0, 0); glVertex3f(0, 0, 1)
+        glTexCoord2f(1, 0); glVertex3f(1, 0, 1)
+        glTexCoord2f(1, 1); glVertex3f(1, 1, 1)
+        glTexCoord2f(0, 1); glVertex3f(0, 1, 1)
+        # Left
+        glTexCoord2f(0, 0); glVertex3f(0, 0, 0)
+        glTexCoord2f(1, 0); glVertex3f(0, 0, 1)
+        glTexCoord2f(1, 1); glVertex3f(0, 1, 1)
+        glTexCoord2f(0, 1); glVertex3f(0, 1, 0)
+        # Right
+        glTexCoord2f(0, 0); glVertex3f(1, 0, 0)
+        glTexCoord2f(1, 0); glVertex3f(1, 0, 1)
+        glTexCoord2f(1, 1); glVertex3f(1, 1, 1)
+        glTexCoord2f(0, 1); glVertex3f(1, 1, 0)
+        # Top
+        glTexCoord2f(0, 0); glVertex3f(0, 1, 0)
+        glTexCoord2f(1, 0); glVertex3f(1, 1, 0)
+        glTexCoord2f(1, 1); glVertex3f(1, 1, 1)
+        glTexCoord2f(0, 1); glVertex3f(0, 1, 1)
+        # Bottom
+        glTexCoord2f(0, 0); glVertex3f(0, 0, 0)
+        glTexCoord2f(1, 0); glVertex3f(1, 0, 1)
+        glTexCoord2f(1, 1); glVertex3f(1, 1, 1)
+        glTexCoord2f(0, 1); glVertex3f(1, 1, 0)
         glEnd()
+        glPopMatrix()
 
-    def draw_block_highlight(self, x, y, z):
+    def draw_entity_highlight(self, entity):
         glColor4f(1.0, 1.0, 0.0, 0.3)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
+        glPushMatrix()
+        glTranslatef(*entity.position)
+        glRotatef(entity.rotation[1], 0, 1, 0)
+        glRotatef(entity.rotation[0], 1, 0, 0)
+        glRotatef(entity.rotation[2], 0, 0, 1)
+        glScalef(*entity.scale)
+        
         glBegin(GL_QUADS)
         # Draw slightly larger box around selected block
         offset = 0.05
-        glVertex3f(x - offset, y - offset, z - offset)
-        glVertex3f(x + 1 + offset, y - offset, z - offset)
-        glVertex3f(x + 1 + offset, y + 1 + offset, z - offset)
-        glVertex3f(x - offset, y + 1 + offset, z - offset)
+        glVertex3f(0 - offset, 0 - offset, 0 - offset)
+        glVertex3f(1 + offset, 0 - offset, 0 - offset)
+        glVertex3f(1 + offset, 1 + offset, 0 - offset)
+        glVertex3f(0 - offset, 1 + offset, 0 - offset)
         
-        glVertex3f(x - offset, y - offset, z + 1 + offset)
-        glVertex3f(x + 1 + offset, y - offset, z + 1 + offset)
-        glVertex3f(x + 1 + offset, y + 1 + offset, z + 1 + offset)
-        glVertex3f(x - offset, y + 1 + offset, z + 1 + offset)
+        glVertex3f(0 - offset, 0 - offset, 1 + offset)
+        glVertex3f(1 + offset, 0 - offset, 1 + offset)
+        glVertex3f(1 + offset, 1 + offset, 1 + offset)
+        glVertex3f(0 - offset, 1 + offset, 1 + offset)
         glEnd()
+        
+        glPopMatrix()
         
         glDisable(GL_BLEND)
 
-    def draw_placement_preview(self, x, y, z):
+    def draw_placement_preview(self, pos):
         glColor4f(0.0, 1.0, 0.0, 0.3)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         
+        glPushMatrix()
+        glTranslatef(*pos)
+        
         glBegin(GL_QUADS)
-        glVertex3f(x, y, z)
-        glVertex3f(x + 1, y, z)
-        glVertex3f(x + 1, y + 1, z)
-        glVertex3f(x, y + 1, z)
+        glVertex3f(0, 0, 0)
+        glVertex3f(1, 0, 0)
+        glVertex3f(1, 1, 0)
+        glVertex3f(0, 1, 0)
         
-        glVertex3f(x, y, z + 1)
-        glVertex3f(x + 1, y, z + 1)
-        glVertex3f(x + 1, y + 1, z + 1)
-        glVertex3f(x, y + 1, z + 1)
+        glVertex3f(0, 0, 1)
+        glVertex3f(1, 0, 1)
+        glVertex3f(1, 1, 1)
+        glVertex3f(0, 1, 1)
         
-        glVertex3f(x, y, z)
-        glVertex3f(x, y, z + 1)
-        glVertex3f(x, y + 1, z + 1)
-        glVertex3f(x, y + 1, z)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 0, 1)
+        glVertex3f(0, 1, 1)
+        glVertex3f(0, 1, 0)
         
-        glVertex3f(x + 1, y, z)
-        glVertex3f(x + 1, y, z + 1)
-        glVertex3f(x + 1, y + 1, z + 1)
-        glVertex3f(x + 1, y + 1, z)
+        glVertex3f(1, 0, 0)
+        glVertex3f(1, 0, 1)
+        glVertex3f(1, 1, 1)
+        glVertex3f(1, 1, 0)
         
-        glVertex3f(x, y + 1, z)
-        glVertex3f(x + 1, y + 1, z)
-        glVertex3f(x + 1, y + 1, z + 1)
-        glVertex3f(x, y + 1, z + 1)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 0, 1)
+        glVertex3f(0, 1, 1)
+        glVertex3f(0, 1, 0)
         
-        glVertex3f(x, y, z)
-        glVertex3f(x + 1, y, z)
-        glVertex3f(x + 1, y, z + 1)
-        glVertex3f(x, y, z + 1)
+        glVertex3f(1, 0, 0)
+        glVertex3f(1, 0, 1)
+        glVertex3f(1, 1, 1)
+        glVertex3f(1, 1, 0)
+        
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 0, 1)
+        glVertex3f(0, 1, 1)
+        glVertex3f(0, 1, 0)
+        
+        glVertex3f(1, 0, 0)
+        glVertex3f(1, 0, 1)
+        glVertex3f(1, 1, 1)
+        glVertex3f(1, 1, 0)
         glEnd()
+        
+        glPopMatrix()
         
         glDisable(GL_BLEND)
 
@@ -307,13 +284,13 @@ class EditorRenderer:
         
         # Draw grid lines
         grid_size = self.grid_sizes[self.current_grid_index]
-        for x in range(0, MAP_WIDTH + 1, grid_size):
+        for x in range(0, EDITOR_WIDTH + 1, grid_size):
             glVertex3f(x, 0, 0)
-            glVertex3f(x, 0, MAP_DEPTH)
+            glVertex3f(x, 0, EDITOR_DEPTH)
         
-        for z in range(0, MAP_DEPTH + 1, grid_size):
+        for z in range(0, EDITOR_DEPTH + 1, grid_size):
             glVertex3f(0, 0, z)
-            glVertex3f(MAP_WIDTH, 0, z)
+            glVertex3f(EDITOR_WIDTH, 0, z)
         
         glEnd()
         glEnable(GL_DEPTH_TEST)
@@ -611,14 +588,14 @@ class EditorRenderer:
         
         # Place block
         if self.tools["place"]["active"]:
-            if 0 <= x < MAP_WIDTH and 0 <= y < MAP_HEIGHT and 0 <= z < MAP_DEPTH:
-                game_map[z][y][x] = 1
+            if 0 <= x < EDITOR_WIDTH and 0 <= y < EDITOR_HEIGHT and 0 <= z < EDITOR_DEPTH:
+                self.entities[z * EDITOR_WIDTH + y * EDITOR_WIDTH + x] = Entity(position=(x, 0, z), type="block")
         
         # Delete block
-        elif self.tools["delete"]["active"] and self.camera.selected_block:
-            x, y, z = self.camera.selected_block
-            if 0 <= x < MAP_WIDTH and 0 <= y < MAP_HEIGHT and 0 <= z < MAP_DEPTH:
-                game_map[z][y][x] = 0
+        elif self.tools["delete"]["active"] and self.camera.selected_entity:
+            x, y, z = self.camera.selected_entity.position
+            if 0 <= x < EDITOR_WIDTH and 0 <= y < EDITOR_HEIGHT and 0 <= z < EDITOR_DEPTH:
+                self.entities[z * EDITOR_WIDTH + y * EDITOR_WIDTH + x] = None
 
     def handle_key(self, key):
         # Grid size control

@@ -7,6 +7,7 @@ import math
 # Screen settings
 WIDTH = 800
 HEIGHT = 600
+MAP_DEPTH = 32  # or whatever value you want
 FPS = 60
 RENDER_DISTANCE = 5000  
 # Map settings

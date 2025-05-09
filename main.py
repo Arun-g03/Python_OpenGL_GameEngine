@@ -15,6 +15,8 @@ from rendering.game_render import GameRenderer  # NEW
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
+
+
 def main():
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.OPENGL | pygame.DOUBLEBUF)
