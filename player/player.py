@@ -15,9 +15,6 @@ class Player:
         self.vertical_offset = 0  # for looking up/down
         self.eye_height = TILE_SIZE_M * 0.5  # about halfway up a tile
 
-        pygame.mouse.set_visible(False)
-        pygame.event.set_grab(True)
-
     def movement(self, delta_time):
         keys = pygame.key.get_pressed()
 

@@ -1,14 +1,20 @@
 import pygame
 from OpenGL.GL import *
+from utils.settings import WIDTH, HEIGHT
 
 class MainMenu:
     def __init__(self):
         self.font = pygame.font.SysFont("Arial", 48)
+        button_width = 200
+        button_height = 60
+        button_x = (WIDTH - button_width) // 2
+        button_y_start = HEIGHT // 3
+        button_gap = 80
         self.buttons = [
-            {"label": "Start Game", "rect": pygame.Rect(300, 200, 200, 60)},
-            {"label": "Enter Editor", "rect": pygame.Rect(300, 280, 200, 60)},
-            {"label": "Options", "rect": pygame.Rect(300, 360, 200, 60)},
-            {"label": "Quit", "rect": pygame.Rect(300, 360, 200, 60)}
+            {"label": "Start Game", "rect": pygame.Rect(button_x, button_y_start, button_width, button_height)},
+            {"label": "Enter Editor", "rect": pygame.Rect(button_x, button_y_start + button_gap, button_width, button_height)},
+            {"label": "Options", "rect": pygame.Rect(button_x, button_y_start + 2 * button_gap, button_width, button_height)},
+            {"label": "Quit", "rect": pygame.Rect(button_x, button_y_start + 3 * button_gap, button_width, button_height)}
         ]
 
     def draw(self):
@@ -19,7 +25,7 @@ class MainMenu:
         glMatrixMode(GL_PROJECTION)
         glPushMatrix()
         glLoadIdentity()
-        glOrtho(0, 800, 600, 0, -1, 1)
+        glOrtho(0, WIDTH, HEIGHT, 0, -1, 1)
 
         glMatrixMode(GL_MODELVIEW)
         glPushMatrix()
@@ -29,9 +35,9 @@ class MainMenu:
         glColor4f(0.05, 0.05, 0.05, 1.0)
         glBegin(GL_QUADS)
         glVertex2f(0, 0)
-        glVertex2f(800, 0)
-        glVertex2f(800, 600)
-        glVertex2f(0, 600)
+        glVertex2f(WIDTH, 0)
+        glVertex2f(WIDTH, HEIGHT)
+        glVertex2f(0, HEIGHT)
         glEnd()
 
         # Buttons and labels
@@ -51,7 +57,6 @@ class MainMenu:
             # Render text label with Pygame
             self.draw_text_label(button["label"], button["rect"].center)
 
-
         glPopMatrix()
         glMatrixMode(GL_PROJECTION)
         glPopMatrix()
@@ -59,16 +64,16 @@ class MainMenu:
         glDisable(GL_BLEND)
         glEnable(GL_DEPTH_TEST)
 
-
     def handle_click(self, pos):
         if self.buttons[0]["rect"].collidepoint(pos):
             return "start"
         elif self.buttons[1]["rect"].collidepoint(pos):
             return "editor"
         elif self.buttons[2]["rect"].collidepoint(pos):
+            return "options"
+        elif self.buttons[3]["rect"].collidepoint(pos):
             return "quit"
         return None
-
 
     def draw_text_label(self, text, center):
         # Render Pygame text surface
@@ -92,6 +97,5 @@ class MainMenu:
         glTexCoord2f(1, 1); glVertex2f(x + width, y)
         glTexCoord2f(1, 0); glVertex2f(x + width, y + height)
         glTexCoord2f(0, 0); glVertex2f(x, y + height)
-
         glEnd()
         glDeleteTextures([tex_id])
