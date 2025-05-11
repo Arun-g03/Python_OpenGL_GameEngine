@@ -140,31 +140,4 @@ class MainMenu:
                         return "options"
                     elif i == 3:  # Quit
                         return "quit"
-
-        glEnable(GL_TEXTURE_2D)
-        glBindTexture(GL_TEXTURE_2D, texture["id"])
-        glColor4f(1, 1, 1, 1)
-        
-        glBegin(GL_QUADS)
-        glTexCoord2f(0, 0); glVertex2f(x, y)
-        glTexCoord2f(1, 0); glVertex2f(x + width, y)
-        glTexCoord2f(1, 1); glVertex2f(x + width, y + height)
-        glTexCoord2f(0, 1); glVertex2f(x, y + height)
-        glEnd()
-        
-        glDisable(GL_TEXTURE_2D)
-
-    def handle_click(self, pos):
-        x, y = pos
-        for i, button in enumerate(self.buttons):
-            bx, by, bw, bh = button["rect"]
-            if (bx <= x <= bx + bw and by <= y <= by + bh):
-                if i == 0:  # Start Game
-                    return "start"
-                elif i == 1:  # Enter Editor
-                    return "editor"
-                elif i == 2:  # Options
-                    return "options"
-                elif i == 3:  # Quit
-                    return "quit"
         return None

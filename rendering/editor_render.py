@@ -8,6 +8,7 @@ from rendering.texture_loader import load_texture
 from PIL import Image, ImageDraw, ImageFont
 import os
 from rendering.rasteriser import Rasteriser
+from utils import input
 
 EDITOR_WIDTH = 32
 EDITOR_HEIGHT = 8
@@ -36,6 +37,7 @@ class EditorCamera:
         self.placement_pos = None
         self.placement_normal = None
         self.fly_mode = True  # Always fly mode
+        self.last_mouse_pos = None
 
     def update(self, dt, keys, mouse_dx, mouse_dy, mouse_pos, mouse_wheel=0):
         # Speed control
@@ -45,12 +47,15 @@ class EditorCamera:
             self.speed = self.slow_speed
 
         # Mouse look (hold right mouse button)
-        if glfw.get_mouse_button(glfw.get_current_context(), glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS:
-            self.yaw += mouse_dx * self.mouse_sensitivity
-            self.pitch -= mouse_dy * self.mouse_sensitivity
+        if input.is_right_mouse_held():
+            # Apply rotation based on mouse movement
+            self.yaw += mouse_dx * self.mouse_sensitivity * 0.1  # Reduced sensitivity
+            self.pitch -= mouse_dy * self.mouse_sensitivity * 0.1  # Reduced sensitivity
+            # Clamp pitch to prevent over-rotation
             self.pitch = max(-math.pi/2, min(math.pi/2, self.pitch))
+            print(f"Camera rotation - Yaw: {math.degrees(self.yaw):.1f}°, Pitch: {math.degrees(self.pitch):.1f}°")
 
-        # WASD/Space/Shift movement
+        # Calculate movement vectors
         forward = [
             math.cos(self.yaw) * math.cos(self.pitch),
             math.sin(self.pitch),
@@ -62,6 +67,8 @@ class EditorCamera:
             math.cos(self.yaw)
         ]
         up = [0, 1, 0]
+
+        # Apply movement
         velocity = self.speed * dt
         if keys.get(glfw.KEY_W):
             self.pos = [p + f * velocity for p, f in zip(self.pos, forward)]
@@ -193,6 +200,9 @@ class EditorRenderer:
             return
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
+        # Update camera with current input state
+        self.camera.update(dt, keys, mouse_dx, mouse_dy, mouse_pos, mouse_wheel)
+
         # --- 3D WORLD ---
         # Set up perspective projection
         glMatrixMode(GL_PROJECTION)
@@ -201,8 +211,7 @@ class EditorRenderer:
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
 
-        # Update camera and apply view
-        self.camera.update(dt, keys, mouse_dx, mouse_dy, mouse_pos, mouse_wheel)
+        # Apply camera view
         self.camera.apply_view()
 
         # Draw world (floor, entities, grid, etc.)

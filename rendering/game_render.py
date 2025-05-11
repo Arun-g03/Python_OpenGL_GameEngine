@@ -1,7 +1,7 @@
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from utils.settings import *
-from rendering.raycaster import Raycaster
+from rendering.rasteriser import Rasteriser
 from enemies.enemy import Enemy
 from utils.logger import logger
 
@@ -20,19 +20,19 @@ class GameRenderer:
         self.floor_texture = floor_texture
         self.enemies = []
         
-        # Initialize raycaster
+        # Initialize rasteriser
         try:
-            logger.log("Creating raycaster...")
-            self.raycaster = Raycaster(player, game_map)
+            logger.log("Creating rasteriser...")
+            self.rasteriser = Rasteriser(player, game_map)
             if floor_texture:
-                logger.log("Setting floor texture in raycaster...")
-                self.raycaster.set_floor_texture(floor_texture)
+                logger.log("Setting floor texture in rasteriser...")
+                self.rasteriser.set_floor_texture(floor_texture)
             else:
                 logger.log("Warning: No floor texture provided")
-            logger.log("Raycaster created successfully")
+            logger.log("Rasteriser created successfully")
         except Exception as e:
-            logger.log(f"Error initializing raycaster: {e}")
-            self.raycaster = None
+            logger.log(f"Error initializing rasteriser: {e}")
+            self.rasteriser = None
         
         logger.log("Game renderer initialized successfully")
 
