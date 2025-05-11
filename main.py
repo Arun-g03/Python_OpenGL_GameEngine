@@ -2,6 +2,7 @@ import glfw
 from OpenGL.GL import *
 from OpenGL.GLU import *
 import numpy as np
+import traceback
 from utils.settings import *
 from utils.logger import logger
 from player.player import Player
@@ -107,6 +108,7 @@ def main():
                 glfw.set_cursor_pos(window, WIDTH//2, HEIGHT//2)
             except Exception as e:
                 logger.log(f"Error in transition_to_game: {e}")
+                traceback.print_exc()
                 set_game_state(GameState.MENU)  # Fall back to menu if transition fails
         
         # Main loop
@@ -161,12 +163,14 @@ def main():
                 input.reset_mouse_delta()
             except Exception as e:
                 logger.log(f"Error in main loop: {e}")
+                traceback.print_exc()
                 break
         
         # Cleanup
         game_renderer.cleanup()
     except Exception as e:
         logger.log(f"Error in main: {e}")
+        traceback.print_exc()
     finally:
         glfw.terminate()
 

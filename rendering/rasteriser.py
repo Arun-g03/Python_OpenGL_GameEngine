@@ -21,11 +21,15 @@ class Rasteriser:
             {"type": "cube", "position": (5, 1, 5), "size": 2},
             {"type": "sphere", "position": (10, 1, 10), "radius": 1.5}
         ]
+        self.floor_texture = None
 
     def set_camera(self, pos, yaw, pitch):
         self.camera_pos = list(pos)
         self.camera_yaw = yaw
         self.camera_pitch = pitch
+
+    def set_floor_texture(self, texture):
+        self.floor_texture = texture
 
     def draw_cube(self, position, size):
         x, y, z = position
@@ -102,6 +106,8 @@ class Rasteriser:
                 self.draw_cube(entity["position"], entity["size"])
             elif entity["type"] == "sphere":
                 self.draw_sphere(entity["position"], entity["radius"])
+        if self.floor_texture:
+            glBindTexture(GL_TEXTURE_2D, self.floor_texture)
 
 def main():
     if not glfw.init():
@@ -122,7 +128,7 @@ def main():
     glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_DISABLED)
 
     def cursor_pos_callback(window, xpos, ypos):
-        nonlocal last_mouse, mouse_look
+        global mouse_dx, mouse_dy, last_mouse_pos, skip_mouse_delta, suppress_input
         if mouse_look and last_mouse is not None:
             dx = xpos - last_mouse[0]
             dy = ypos - last_mouse[1]

@@ -4,6 +4,7 @@ from utils.settings import *
 from rendering.rasteriser import Rasteriser
 from enemies.enemy import Enemy
 from utils.logger import logger
+import traceback
 
 class GameRenderer:
     def __init__(self, player, game_map, floor_texture):
@@ -23,7 +24,7 @@ class GameRenderer:
         # Initialize rasteriser
         try:
             logger.log("Creating rasteriser...")
-            self.rasteriser = Rasteriser(player, game_map)
+            self.rasteriser = Rasteriser()
             if floor_texture:
                 logger.log("Setting floor texture in rasteriser...")
                 self.rasteriser.set_floor_texture(floor_texture)
@@ -32,6 +33,7 @@ class GameRenderer:
             logger.log("Rasteriser created successfully")
         except Exception as e:
             logger.log(f"Error initializing rasteriser: {e}")
+            traceback.print_exc()
             self.rasteriser = None
         
         logger.log("Game renderer initialized successfully")
@@ -55,12 +57,12 @@ class GameRenderer:
             glRotatef(self.player.rot_y, 0, 1, 0)
             glTranslatef(-self.player.x, -self.player.y, -self.player.z)
 
-            # Render the world using the raycaster
-            if self.raycaster:
-                logger.log("Rendering world with raycaster...")
-                self.raycaster.render()
+            # Render the world using the Rasteriser
+            if self.rasteriser:
+                logger.log("Rendering world with Rasteriser...")
+                self.rasteriser.render()
             else:
-                logger.log("Warning: Raycaster not initialized")
+                logger.log("Warning: Rasteriser not initialized")
 
             # Render enemies
             logger.log("Rendering enemies...")
@@ -69,6 +71,7 @@ class GameRenderer:
             logger.log("Game render completed successfully")
         except Exception as e:
             logger.log(f"Error in game render: {e}")
+            traceback.print_exc()
 
     def render_enemies(self):
         try:
@@ -81,9 +84,9 @@ class GameRenderer:
     def update(self, delta_time):
         try:
             logger.log("Updating game state...")
-            # Update raycaster if needed
-            if self.raycaster:
-                self.raycaster.update(delta_time)
+            # Update Rasteriser if needed
+            if self.rasteriser:
+                self.rasteriser.update(delta_time)
             
             # Update enemies
             for enemy in self.enemies:
@@ -92,14 +95,16 @@ class GameRenderer:
             logger.log("Game state updated successfully")
         except Exception as e:
             logger.log(f"Error in game update: {e}")
+            traceback.print_exc()
 
     def cleanup(self):
         try:
             logger.log("Cleaning up game renderer...")
             # Clean up any resources
             self.enemies.clear()
-            if self.raycaster:
-                self.raycaster = None
+            if self.rasteriser:
+                self.rasteriser = None
             logger.log("Game renderer cleanup completed")
         except Exception as e:
             logger.log(f"Error in cleanup: {e}") 
+            traceback.print_exc()

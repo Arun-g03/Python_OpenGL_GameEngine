@@ -1,7 +1,7 @@
 import glfw
 from enum import Enum, auto
 import math
-
+suppress_input = False 
 # --- Game States ---
 class GameState(Enum):
     MENU = auto()
@@ -19,6 +19,7 @@ current_game_state = GameState.MENU
 is_right_mouse_down = False
 place_block_pressed = False
 delete_block_pressed = False
+ # suppress deltas for 1 frame
 
 # --- Action Bindings ---
 bindings = {
@@ -53,20 +54,26 @@ def key_callback(window, key, scancode, action, mods):
     keys[key] = action
 
 def mouse_button_callback(window, button, action, mods):
-    global is_right_mouse_down, last_mouse_pos, place_block_pressed, delete_block_pressed
+    global is_right_mouse_down, last_mouse_pos, place_block_pressed, delete_block_pressed, suppress_input, mouse_dx, mouse_dy
     mouse_buttons[button] = action
     
     # Handle button press
     if action == glfw.PRESS:
         mouse_button_pressed[button] = True
         
-        # Right mouse button handling
         if button == glfw.MOUSE_BUTTON_RIGHT:
             is_right_mouse_down = True
             if current_game_state == GameState.EDITOR:
                 glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_DISABLED)
-                last_mouse_pos = glfw.get_cursor_pos(window)
-                delete_block_pressed = True
+                width, height = glfw.get_window_size(window)
+                glfw.set_cursor_pos(window, width // 2, height // 2)
+                
+                suppress_input = True
+                mouse_dx = 0
+                mouse_dy = 0
+
+
+
         
         # Left mouse button handling
         elif button == glfw.MOUSE_BUTTON_LEFT:
@@ -114,24 +121,29 @@ def mouse_button_callback(window, button, action, mods):
                 pass
 
 def cursor_position_callback(window, xpos, ypos):
-    global mouse_dx, mouse_dy, last_mouse_pos
+    global mouse_dx, mouse_dy, last_mouse_pos, skip_mouse_delta, suppress_input
 
     width, height = glfw.get_window_size(window)
     center_x, center_y = width // 2, height // 2
 
+    if suppress_input:
+        mouse_dx = 0
+        mouse_dy = 0
+        suppress_input = False
+        glfw.set_cursor_pos(window, center_x, center_y)
+        return
+
+
     if is_right_mouse_down and current_game_state == GameState.EDITOR:
-        # Always calculate deltas from the center (FPS-style look)
         mouse_dx = xpos - center_x
         mouse_dy = ypos - center_y
-
-        # Reset the cursor to center AFTER reading deltas
         glfw.set_cursor_pos(window, center_x, center_y)
     else:
-        # Track actual mouse movement for UI, if needed
         mouse_dx = 0
         mouse_dy = 0
 
     last_mouse_pos = (xpos, ypos)
+
 
 
 
