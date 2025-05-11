@@ -8,7 +8,7 @@ import math
 WIDTH = 1280
 HEIGHT = 720
 MAP_DEPTH = 32  # or whatever value you want
-FPS = 60
+FPS = 30
 RENDER_DISTANCE = 5000  
 # Map settings
 TILE_SIZE_M = 1.0  

@@ -1,186 +1,248 @@
 import math
 import numpy as np
 from OpenGL.GL import *
-from OpenGL.GLU import gluPerspective, gluLookAt, gluNewQuadric, gluSphere, gluDeleteQuadric
-from utils.settings import WIDTH, HEIGHT
-import glfw
-import time
+from pyrr import Matrix44, Vector3
+from rendering.my_shaders import compile_shader_program, Material
+
+from PIL import Image
 
 class Rasteriser:
     def __init__(self):
-        # Camera parameters
-        self.camera_pos = [WIDTH // 2, 10, HEIGHT // 2]
-        self.camera_yaw = 0
-        self.camera_pitch = -math.pi/6
-        self.fov = 60
-        self.aspect = WIDTH / HEIGHT
-        self.near = 0.1
-        self.far = 1000.0
-        # Demo entities
-        self.entities = [
-            {"type": "cube", "position": (5, 1, 5), "size": 2},
-            {"type": "sphere", "position": (10, 1, 10), "radius": 1.5}
-        ]
+        self.shader_program = compile_shader_program()
+        self.cube_vao, self.vertex_count = self.create_cube_geometry()
+        self.sphere_vao, self.sphere_vertex_count = self.create_sphere_geometry()
         self.floor_texture = None
+        self.build_floor_mesh()
 
-    def set_camera(self, pos, yaw, pitch):
-        self.camera_pos = list(pos)
-        self.camera_yaw = yaw
-        self.camera_pitch = pitch
+    def create_cube_geometry(self):
+        # Position + Normal per vertex
+        data = []
+        def face(p1, p2, p3, p4):
+            normal = np.cross(np.subtract(p2, p1), np.subtract(p3, p1))
+            normal = normal / np.linalg.norm(normal)
+            data.extend(p1 + normal.tolist())
+            data.extend(p2 + normal.tolist())
+            data.extend(p3 + normal.tolist())
+            data.extend(p1 + normal.tolist())
+            data.extend(p3 + normal.tolist())
+            data.extend(p4 + normal.tolist())
 
-    def set_floor_texture(self, texture):
-        self.floor_texture = texture
+        face([-1,-1, 1], [ 1,-1, 1], [ 1, 1, 1], [-1, 1, 1])  # front
+        face([-1,-1,-1], [-1, 1,-1], [ 1, 1,-1], [ 1,-1,-1])  # back
+        face([-1,-1,-1], [-1,-1, 1], [-1, 1, 1], [-1, 1,-1])  # left
+        face([ 1,-1,-1], [ 1, 1,-1], [ 1, 1, 1], [ 1,-1, 1])  # right
+        face([-1, 1,-1], [-1, 1, 1], [ 1, 1, 1], [ 1, 1,-1])  # top
+        face([-1,-1,-1], [ 1,-1,-1], [ 1,-1, 1], [-1,-1, 1])  # bottom
 
-    def draw_cube(self, position, size):
-        x, y, z = position
-        s = size / 2.0
-        glPushMatrix()
-        glTranslatef(x, y, z)
-        glScalef(s, s, s)
-        glColor3f(0.8, 0.2, 0.2)
-        glBegin(GL_QUADS)
-        # Front
-        glVertex3f(-1, -1,  1)
-        glVertex3f( 1, -1,  1)
-        glVertex3f( 1,  1,  1)
-        glVertex3f(-1,  1,  1)
-        # Back
-        glVertex3f(-1, -1, -1)
-        glVertex3f(-1,  1, -1)
-        glVertex3f( 1,  1, -1)
-        glVertex3f( 1, -1, -1)
-        # Left
-        glVertex3f(-1, -1, -1)
-        glVertex3f(-1, -1,  1)
-        glVertex3f(-1,  1,  1)
-        glVertex3f(-1,  1, -1)
-        # Right
-        glVertex3f( 1, -1, -1)
-        glVertex3f( 1,  1, -1)
-        glVertex3f( 1,  1,  1)
-        glVertex3f( 1, -1,  1)
-        # Top
-        glVertex3f(-1,  1, -1)
-        glVertex3f(-1,  1,  1)
-        glVertex3f( 1,  1,  1)
-        glVertex3f( 1,  1, -1)
-        # Bottom
-        glVertex3f(-1, -1, -1)
-        glVertex3f( 1, -1, -1)
-        glVertex3f( 1, -1,  1)
-        glVertex3f(-1, -1,  1)
-        glEnd()
-        glPopMatrix()
+        vertices = np.array(data, dtype=np.float32)
 
-    def draw_sphere(self, position, radius, slices=16, stacks=16):
-        x, y, z = position
-        glPushMatrix()
-        glTranslatef(x, y, z)
-        glColor3f(0.2, 0.2, 0.8)
-        quad = gluNewQuadric()
-        gluSphere(quad, radius, slices, stacks)
-        gluDeleteQuadric(quad)
-        glPopMatrix()
+        vao = glGenVertexArrays(1)
+        vbo = glGenBuffers(1)
+        glBindVertexArray(vao)
+        glBindBuffer(GL_ARRAY_BUFFER, vbo)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
 
-    def render(self):
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        # Perspective projection
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
-        gluPerspective(self.fov, self.aspect, self.near, self.far)
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
-        # Camera look direction
-        look_x = self.camera_pos[0] + math.cos(self.camera_yaw) * math.cos(self.camera_pitch)
-        look_y = self.camera_pos[1] + math.sin(self.camera_pitch)
-        look_z = self.camera_pos[2] + math.sin(self.camera_yaw) * math.cos(self.camera_pitch)
-        gluLookAt(
-            self.camera_pos[0], self.camera_pos[1], self.camera_pos[2],
-            look_x, look_y, look_z,
-            0, 1, 0
-        )
-        glEnable(GL_DEPTH_TEST)
-        # Draw demo entities
-        for entity in self.entities:
-            if entity["type"] == "cube":
-                self.draw_cube(entity["position"], entity["size"])
-            elif entity["type"] == "sphere":
-                self.draw_sphere(entity["position"], entity["radius"])
-        if self.floor_texture:
-            glBindTexture(GL_TEXTURE_2D, self.floor_texture)
+        stride = 6 * 4  # 3 position + 3 normal
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(1)
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(12))
 
-def main():
-    if not glfw.init():
-        print("Failed to initialize GLFW")
-        return
-    window = glfw.create_window(WIDTH, HEIGHT, "OpenGL Rasteriser", None, None)
-    if not window:
-        glfw.terminate()
-        print("Failed to create window")
-        return
-    glfw.make_context_current(window)
-    glfw.swap_interval(1)
+        glBindVertexArray(0)
+        return vao, len(vertices) // 6
 
-    rasteriser = Rasteriser()
-    last_time = time.time()
-    mouse_look = False
-    last_mouse = None
-    glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_DISABLED)
+    def create_sphere_geometry(self, stacks=16, slices=16):
+        vertices = []
+        for i in range(stacks):
+            lat0 = math.pi * (-0.5 + float(i) / stacks)
+            z0 = math.sin(lat0)
+            zr0 = math.cos(lat0)
 
-    def cursor_pos_callback(window, xpos, ypos):
-        global mouse_dx, mouse_dy, last_mouse_pos, skip_mouse_delta, suppress_input
-        if mouse_look and last_mouse is not None:
-            dx = xpos - last_mouse[0]
-            dy = ypos - last_mouse[1]
-            rasteriser.camera_yaw += dx * 0.002
-            rasteriser.camera_pitch -= dy * 0.002
-            rasteriser.camera_pitch = max(-math.pi/2, min(math.pi/2, rasteriser.camera_pitch))
-        last_mouse = (xpos, ypos)
+            lat1 = math.pi * (-0.5 + float(i + 1) / stacks)
+            z1 = math.sin(lat1)
+            zr1 = math.cos(lat1)
 
-    glfw.set_cursor_pos_callback(window, cursor_pos_callback)
+            for j in range(slices + 1):
+                lng = 2 * math.pi * float(j) / slices
+                x = math.cos(lng)
+                y = math.sin(lng)
 
-    while not glfw.window_should_close(window):
-        now = time.time()
-        dt = now - last_time
-        last_time = now
+                nx0, ny0, nz0 = x * zr0, y * zr0, z0
+                nx1, ny1, nz1 = x * zr1, y * zr1, z1
 
-        # Camera movement
-        speed = 10.0 * dt
-        if glfw.get_key(window, glfw.KEY_LEFT_CONTROL) == glfw.PRESS:
-            speed *= 2
-        forward = [
-            math.cos(rasteriser.camera_yaw) * math.cos(rasteriser.camera_pitch),
-            math.sin(rasteriser.camera_pitch),
-            math.sin(rasteriser.camera_yaw) * math.cos(rasteriser.camera_pitch)
-        ]
-        right = [-math.sin(rasteriser.camera_yaw), 0, math.cos(rasteriser.camera_yaw)]
-        up = [0, 1, 0]
-        if glfw.get_key(window, glfw.KEY_W) == glfw.PRESS:
-            rasteriser.camera_pos = [p + f * speed for p, f in zip(rasteriser.camera_pos, forward)]
-        if glfw.get_key(window, glfw.KEY_S) == glfw.PRESS:
-            rasteriser.camera_pos = [p - f * speed for p, f in zip(rasteriser.camera_pos, forward)]
-        if glfw.get_key(window, glfw.KEY_A) == glfw.PRESS:
-            rasteriser.camera_pos = [p - r * speed for p, r in zip(rasteriser.camera_pos, right)]
-        if glfw.get_key(window, glfw.KEY_D) == glfw.PRESS:
-            rasteriser.camera_pos = [p + r * speed for p, r in zip(rasteriser.camera_pos, right)]
-        if glfw.get_key(window, glfw.KEY_SPACE) == glfw.PRESS:
-            rasteriser.camera_pos = [p + u * speed for p, u in zip(rasteriser.camera_pos, up)]
-        if glfw.get_key(window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS:
-            rasteriser.camera_pos = [p - u * speed for p, u in zip(rasteriser.camera_pos, up)]
+                vertices.extend([nx0, ny0, nz0, nx0, ny0, nz0])
+                vertices.extend([nx1, ny1, nz1, nx1, ny1, nz1])
 
-        # Mouse look toggle (hold right mouse button)
-        if glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS:
-            mouse_look = True
-        else:
-            mouse_look = False
-            last_mouse = None
+        vertices = np.array(vertices, dtype=np.float32)
+        vao = glGenVertexArrays(1)
+        vbo = glGenBuffers(1)
+        glBindVertexArray(vao)
+        glBindBuffer(GL_ARRAY_BUFFER, vbo)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
 
-        # Render
-        rasteriser.render()
-        glfw.swap_buffers(window)
-        glfw.poll_events()
+        stride = 6 * 4
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(1)
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(12))
 
-    glfw.terminate()
+        glBindVertexArray(0)
+        return vao, len(vertices) // 6
 
-if __name__ == "__main__":
-    main() 
+    def draw_cube(self, position: Vector3, size: float, view: Matrix44, projection: Matrix44, material: Material, camera_pos: Vector3):
+        glUseProgram(self.shader_program)
+        glBindVertexArray(self.cube_vao)
+
+        model = Matrix44.from_translation(position) * Matrix44.from_scale([size / 2] * 3)
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "model"), 1, GL_FALSE, model.astype('float32'))
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "view"), 1, GL_FALSE, view.astype('float32'))
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "projection"), 1, GL_FALSE, projection.astype('float32'))
+        glUniform3fv(glGetUniformLocation(self.shader_program, "viewPos"), 1, camera_pos.astype('float32'))
+
+        glUniform3fv(glGetUniformLocation(self.shader_program, "baseColor"), 1, np.array(material.base_color, dtype=np.float32))
+        glUniform3fv(glGetUniformLocation(self.shader_program, "emissiveColor"), 1, np.array(material.emissive_color, dtype=np.float32))
+        glUniform1f(glGetUniformLocation(self.shader_program, "metallic"), material.metallic)
+        glUniform1f(glGetUniformLocation(self.shader_program, "roughness"), material.roughness)
+        glUniform1f(glGetUniformLocation(self.shader_program, "specular"), material.specular)
+
+        glUniform3f(glGetUniformLocation(self.shader_program, "dirLight.direction"), -0.5, -1.0, -0.5)
+        glUniform3f(glGetUniformLocation(self.shader_program, "dirLight.color"), 1.0, 1.0, 1.0)
+        glUniform1f(glGetUniformLocation(self.shader_program, "dirLight.intensity"), 1.0)
+
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, self.vertex_count)
+
+        glBindVertexArray(0)
+        glUseProgram(0)
+
+    def draw_sphere(self, position: Vector3, radius: float, view: Matrix44, projection: Matrix44, material: Material, camera_pos: Vector3):
+        glUseProgram(self.shader_program)
+        glBindVertexArray(self.sphere_vao)
+
+        model = Matrix44.from_translation(position) * Matrix44.from_scale([radius] * 3)
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "model"), 1, GL_FALSE, model.astype('float32'))
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "view"), 1, GL_FALSE, view.astype('float32'))
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "projection"), 1, GL_FALSE, projection.astype('float32'))
+        glUniform3fv(glGetUniformLocation(self.shader_program, "viewPos"), 1, camera_pos.astype('float32'))
+
+        glUniform3fv(glGetUniformLocation(self.shader_program, "baseColor"), 1, np.array(material.base_color, dtype=np.float32))
+        glUniform3fv(glGetUniformLocation(self.shader_program, "emissiveColor"), 1, np.array(material.emissive_color, dtype=np.float32))
+        glUniform1f(glGetUniformLocation(self.shader_program, "metallic"), material.metallic)
+        glUniform1f(glGetUniformLocation(self.shader_program, "roughness"), material.roughness)
+        glUniform1f(glGetUniformLocation(self.shader_program, "specular"), material.specular)
+
+        glUniform3f(glGetUniformLocation(self.shader_program, "dirLight.direction"), -0.5, -1.0, -0.5)
+        glUniform3f(glGetUniformLocation(self.shader_program, "dirLight.color"), 1.0, 1.0, 1.0)
+        glUniform1f(glGetUniformLocation(self.shader_program, "dirLight.intensity"), 1.0)
+
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, self.sphere_vertex_count)
+
+        glBindVertexArray(0)
+        glUseProgram(0)
+
+    def set_floor_texture(self, texture_id):
+        self.floor_texture = texture_id
+
+    def build_floor_mesh(self, width=32, depth=32, y=0.0):
+        vertices = []
+
+        # Base cube geometry (unit cube centered at origin)
+        def cube_vertices(x, y, z):
+            s = 0.5  # size
+            positions = [
+                # Front face
+                [-s, -s,  s], [ s, -s,  s], [ s,  s,  s], [-s,  s,  s],
+                # Back face
+                [-s, -s, -s], [-s,  s, -s], [ s,  s, -s], [ s, -s, -s],
+                # Left face
+                [-s, -s, -s], [-s, -s,  s], [-s,  s,  s], [-s,  s, -s],
+                # Right face
+                [ s, -s, -s], [ s,  s, -s], [ s,  s,  s], [ s, -s,  s],
+                # Top face
+                [-s,  s, -s], [-s,  s,  s], [ s,  s,  s], [ s,  s, -s],
+                # Bottom face
+                [-s, -s, -s], [ s, -s, -s], [ s, -s,  s], [-s, -s,  s],
+            ]
+            normals = [
+                [0, 0, 1], [0, 0, -1], [-1, 0, 0],
+                [1, 0, 0], [0, 1, 0], [0, -1, 0]
+            ]
+            indices = [
+                [0, 1, 2, 0, 2, 3],       # Front
+                [4, 5, 6, 4, 6, 7],       # Back
+                [8, 9,10, 8,10,11],       # Left
+                [12,13,14,12,14,15],      # Right
+                [16,17,18,16,18,19],      # Top
+                [20,21,22,20,22,23]       # Bottom
+            ]
+
+            for i, face in enumerate(indices):
+                normal = normals[i]
+                for idx in face:
+                    px, py, pz = positions[idx]
+                    vertices.extend([px + x, py + y, pz + z] + normal)
+
+        # Build one cube per grid tile
+        for x in range(width):
+            for z in range(depth):
+                cube_vertices(x + 0.5, y, z + 0.5)
+
+        vertices = np.array(vertices, dtype=np.float32)
+
+        vao = glGenVertexArrays(1)
+        vbo = glGenBuffers(1)
+        glBindVertexArray(vao)
+        glBindBuffer(GL_ARRAY_BUFFER, vbo)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
+
+        stride = 6 * 4
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(1)
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(12))
+
+        glBindVertexArray(0)
+
+        self.floor_vao = vao
+        self.floor_vertex_count = len(vertices) // 6
+
+    def draw_floor(self, view, projection, material, camera_pos):
+        glUseProgram(self.shader_program)
+        glBindVertexArray(self.floor_vao)
+
+        model = Matrix44.identity()
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "model"), 1, GL_FALSE, model.astype('float32'))
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "view"), 1, GL_FALSE, view.astype('float32'))
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "projection"), 1, GL_FALSE, projection.astype('float32'))
+        glUniform3fv(glGetUniformLocation(self.shader_program, "viewPos"), 1, camera_pos.astype('float32'))
+
+        glUniform3fv(glGetUniformLocation(self.shader_program, "baseColor"), 1, np.array(material.base_color, dtype=np.float32))
+        glUniform3fv(glGetUniformLocation(self.shader_program, "emissiveColor"), 1, np.array(material.emissive_color, dtype=np.float32))
+        glUniform1f(glGetUniformLocation(self.shader_program, "metallic"), material.metallic)
+        glUniform1f(glGetUniformLocation(self.shader_program, "roughness"), material.roughness)
+        glUniform1f(glGetUniformLocation(self.shader_program, "specular"), material.specular)
+
+        glDrawArrays(GL_TRIANGLES, 0, self.floor_vertex_count)
+
+        glBindVertexArray(0)
+        glUseProgram(0)
+
+    
+
+    def load_cubemap(faces: list[str]) -> int:
+        texture_id = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_CUBE_MAP, texture_id)
+
+        for i, face in enumerate(faces):
+            image = Image.open(face)
+            image = image.convert('RGB')
+            data = image.tobytes()
+            width, height = image.size
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data)
+
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE)
+
+        return texture_id

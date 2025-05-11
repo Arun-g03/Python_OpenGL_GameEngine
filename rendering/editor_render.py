@@ -10,6 +10,9 @@ import os
 from rendering.rasteriser import Rasteriser
 from utils import input
 
+from rendering.my_shaders import Material
+from pyrr import Vector3, Matrix44
+
 EDITOR_WIDTH = 32
 EDITOR_HEIGHT = 8
 EDITOR_DEPTH = 32
@@ -101,10 +104,6 @@ class EditorCamera:
            not hasattr(self, '_last_pitch') or self.pitch != self._last_pitch or \
            not hasattr(self, '_last_speed') or self.speed != self._last_speed:
             
-            print(f"Position: {self.pos}")
-            print(f"Yaw: {math.degrees(self.yaw):.1f}°")
-            print(f"Pitch: {math.degrees(self.pitch):.1f}°") 
-            print(f"Current speed: {self.speed}")
             
             # Store current values
             self._last_pos = self.pos.copy() if hasattr(self.pos, 'copy') else self.pos
@@ -272,176 +271,41 @@ class EditorRenderer:
         glPopMatrix()
         glMatrixMode(GL_MODELVIEW)
 
+    
+
     def draw_world(self):
         glEnable(GL_DEPTH_TEST)
-        glEnable(GL_TEXTURE_2D)
-        
-        # Draw textured floor
-        glBindTexture(GL_TEXTURE_2D, self.floor_texture)
-        glColor3f(1, 1, 1)
-        for x in range(EDITOR_WIDTH):
-            for z in range(EDITOR_DEPTH):
-                glPushMatrix()
-                glTranslatef(x, 0, z)
-                glBegin(GL_QUADS)
-                glTexCoord2f(0, 0); glVertex3f(0, 0, 0)
-                glTexCoord2f(1, 0); glVertex3f(1, 0, 0)
-                glTexCoord2f(1, 1); glVertex3f(1, 0, 1)
-                glTexCoord2f(0, 1); glVertex3f(0, 0, 1)
-                glEnd()
-                glPopMatrix()
 
-        # Draw entities
+        cam_pos = Vector3(self.camera.pos)
+        look_dir = Vector3([
+            math.cos(self.camera.yaw) * math.cos(self.camera.pitch),
+            math.sin(self.camera.pitch),
+            math.sin(self.camera.yaw) * math.cos(self.camera.pitch)
+        ])
+        view = Matrix44.look_at(cam_pos, cam_pos + look_dir, Vector3([0, 1, 0]))
+        projection = Matrix44.perspective_projection(60, WIDTH / HEIGHT, 0.1, 1000.0)
+
+        # Floor rendering
+        self.rasteriser.draw_floor(view, projection, Material(base_color=(0.2, 0.6, 0.2), roughness=0.9), cam_pos)
+
+        # Draw entities using rasteriser
         for entity in self.entities:
             if entity["type"] == "cube":
-                self.draw_cube(entity["position"], entity["size"])
+                pos = Vector3(entity["position"])
+                material = Material(base_color=(0.8, 0.2, 0.2))
+                self.rasteriser.draw_cube(pos, entity["size"], view, projection, material, cam_pos)
             elif entity["type"] == "sphere":
-                self.draw_sphere(entity["position"], entity["radius"])
+                pos = Vector3(entity["position"])
+                material = Material(base_color=(0.2, 0.4, 0.9), roughness=0.3, metallic=0.0, specular=0.5)
+                self.rasteriser.draw_sphere(pos, entity["radius"], view, projection, material, cam_pos)
 
         # Highlight selected block
         if self.camera.selected_entity:
             self.draw_entity_highlight(self.camera.selected_entity)
 
-        # Draw placement preview
+        # Placement preview
         if self.camera.placement_pos and self.tools["place"]["active"]:
             self.draw_placement_preview(self.camera.placement_pos)
-
-    def draw_cube(self, position, size):
-        x, y, z = position
-        s = size / 2.0
-        glPushMatrix()
-        glTranslatef(x, y, z)
-        glScalef(s, s, s)
-        glColor3f(0.8, 0.2, 0.2)
-        # Draw a unit cube centered at origin
-        glBegin(GL_QUADS)
-        # Front
-        glVertex3f(-1, -1,  1)
-        glVertex3f( 1, -1,  1)
-        glVertex3f( 1,  1,  1)
-        glVertex3f(-1,  1,  1)
-        # Back
-        glVertex3f(-1, -1, -1)
-        glVertex3f(-1,  1, -1)
-        glVertex3f( 1,  1, -1)
-        glVertex3f( 1, -1, -1)
-        # Left
-        glVertex3f(-1, -1, -1)
-        glVertex3f(-1, -1,  1)
-        glVertex3f(-1,  1,  1)
-        glVertex3f(-1,  1, -1)
-        # Right
-        glVertex3f( 1, -1, -1)
-        glVertex3f( 1,  1, -1)
-        glVertex3f( 1,  1,  1)
-        glVertex3f( 1, -1,  1)
-        # Top
-        glVertex3f(-1,  1, -1)
-        glVertex3f(-1,  1,  1)
-        glVertex3f( 1,  1,  1)
-        glVertex3f( 1,  1, -1)
-        # Bottom
-        glVertex3f(-1, -1, -1)
-        glVertex3f( 1, -1, -1)
-        glVertex3f( 1, -1,  1)
-        glVertex3f(-1, -1,  1)
-        glEnd()
-        glPopMatrix()
-
-    def draw_sphere(self, position, radius, slices=16, stacks=16):
-        from OpenGL.GLU import gluNewQuadric, gluSphere, gluDeleteQuadric
-        x, y, z = position
-        glPushMatrix()
-        glTranslatef(x, y, z)
-        glColor3f(0.2, 0.2, 0.8)
-        quad = gluNewQuadric()
-        gluSphere(quad, radius, slices, stacks)
-        gluDeleteQuadric(quad)
-        glPopMatrix()
-
-    def draw_entity_highlight(self, entity):
-        glColor4f(1.0, 1.0, 0.0, 0.3)
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        
-        glPushMatrix()
-        glTranslatef(*entity.position)
-        glRotatef(entity.rotation[1], 0, 1, 0)
-        glRotatef(entity.rotation[0], 1, 0, 0)
-        glRotatef(entity.rotation[2], 0, 0, 1)
-        glScalef(*entity.scale)
-        
-        glBegin(GL_QUADS)
-        # Draw slightly larger box around selected block
-        offset = 0.05
-        glVertex3f(0 - offset, 0 - offset, 0 - offset)
-        glVertex3f(1 + offset, 0 - offset, 0 - offset)
-        glVertex3f(1 + offset, 1 + offset, 0 - offset)
-        glVertex3f(0 - offset, 1 + offset, 0 - offset)
-        
-        glVertex3f(0 - offset, 0 - offset, 1 + offset)
-        glVertex3f(1 + offset, 0 - offset, 1 + offset)
-        glVertex3f(1 + offset, 1 + offset, 1 + offset)
-        glVertex3f(0 - offset, 1 + offset, 1 + offset)
-        glEnd()
-        
-        glPopMatrix()
-        
-        glDisable(GL_BLEND)
-
-    def draw_placement_preview(self, pos):
-        glColor4f(0.0, 1.0, 0.0, 0.3)
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        
-        glPushMatrix()
-        glTranslatef(*pos)
-        
-        glBegin(GL_QUADS)
-        glVertex3f(0, 0, 0)
-        glVertex3f(1, 0, 0)
-        glVertex3f(1, 1, 0)
-        glVertex3f(0, 1, 0)
-        
-        glVertex3f(0, 0, 1)
-        glVertex3f(1, 0, 1)
-        glVertex3f(1, 1, 1)
-        glVertex3f(0, 1, 1)
-        
-        glVertex3f(0, 0, 0)
-        glVertex3f(0, 0, 1)
-        glVertex3f(0, 1, 1)
-        glVertex3f(0, 1, 0)
-        
-        glVertex3f(1, 0, 0)
-        glVertex3f(1, 0, 1)
-        glVertex3f(1, 1, 1)
-        glVertex3f(1, 1, 0)
-        
-        glVertex3f(0, 0, 0)
-        glVertex3f(0, 0, 1)
-        glVertex3f(0, 1, 1)
-        glVertex3f(0, 1, 0)
-        
-        glVertex3f(1, 0, 0)
-        glVertex3f(1, 0, 1)
-        glVertex3f(1, 1, 1)
-        glVertex3f(1, 1, 0)
-        
-        glVertex3f(0, 0, 0)
-        glVertex3f(0, 0, 1)
-        glVertex3f(0, 1, 1)
-        glVertex3f(0, 1, 0)
-        
-        glVertex3f(1, 0, 0)
-        glVertex3f(1, 0, 1)
-        glVertex3f(1, 1, 1)
-        glVertex3f(1, 1, 0)
-        glEnd()
-        
-        glPopMatrix()
-        
-        glDisable(GL_BLEND)
 
     def draw_grid(self):
         glDisable(GL_DEPTH_TEST)
@@ -637,3 +501,14 @@ class EditorRenderer:
         # Toggle rasteriser
         elif key == glfw.KEY_R:
             self.use_rasteriser = not self.use_rasteriser
+
+    def draw_entity_highlight(self, entity):
+        # Implementation for highlighting selected entities
+        pass
+
+    def draw_placement_preview(self, position):
+        # Implementation for placement preview
+        pass
+
+
+    
