@@ -3,11 +3,8 @@ from utils.settings import WIDTH, HEIGHT
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import os
-<<<<<<< HEAD
 from utils import input
 import glfw
-=======
->>>>>>> 184e0ae88a08a761791b4f243c90d113633599dd
 
 class MainMenu:
     def __init__(self):
@@ -112,7 +109,6 @@ class MainMenu:
         texture = self.text_textures[text]
         width, height = texture["width"], texture["height"]
         x, y = center[0] - width//2, center[1] - height//2
-<<<<<<< HEAD
 
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, texture["id"])
@@ -144,7 +140,6 @@ class MainMenu:
                         return "options"
                     elif i == 3:  # Quit
                         return "quit"
-=======
 
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, texture["id"])
@@ -172,5 +167,4 @@ class MainMenu:
                     return "options"
                 elif i == 3:  # Quit
                     return "quit"
->>>>>>> 184e0ae88a08a761791b4f243c90d113633599dd
         return None
