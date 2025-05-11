@@ -2,11 +2,12 @@ import glfw
 import math
 import numpy as np
 from OpenGL.GL import *
-from OpenGL.GLU import gluLookAt, gluUnProject
+from OpenGL.GLU import gluLookAt, gluUnProject, gluPerspective
 from utils.settings import *
 from rendering.texture_loader import load_texture
 from PIL import Image, ImageDraw, ImageFont
 import os
+from rendering.rasteriser import Rasteriser
 
 EDITOR_WIDTH = 32
 EDITOR_HEIGHT = 8
@@ -21,58 +22,77 @@ class Entity:
 
 class EditorCamera:
     def __init__(self):
-        self.pos = [EDITOR_WIDTH * TILE_SIZE_M / 2, 5.0, EDITOR_DEPTH * TILE_SIZE_M / 2]  # Start above center
-        self.pitch = -math.pi/4  # Look down at 45 degrees
+        self.pos = [EDITOR_WIDTH * TILE_SIZE_M / 2, 10.0, EDITOR_DEPTH * TILE_SIZE_M / 2]
+        self.pitch = math.pi/6
         self.yaw = 0
+        self.roll = 0
         self.speed = 10.0
         self.mouse_sensitivity = 0.002
+        self.fast_speed = 20.0
+        self.slow_speed = 10.0
         self.selected_entity = None
-        self.transform_mode = "translate"  # translate, rotate, scale
-        self.grid_size = 1  # Changed to integer
-        self.placement_pos = None  # Position where block will be placed
-        self.placement_normal = None  # Normal of the face where block will be placed
+        self.transform_mode = "translate"
+        self.grid_size = 1
+        self.placement_pos = None
+        self.placement_normal = None
+        self.fly_mode = True  # Always fly mode
 
-    def update(self, dt, keys, mouse_dx, mouse_dy, mouse_pos):
-        # Camera speed control
+    def update(self, dt, keys, mouse_dx, mouse_dy, mouse_pos, mouse_wheel=0):
+        # Speed control
         if keys.get(glfw.KEY_LEFT_CONTROL):
-            self.speed = 20.0  # Fast movement
+            self.speed = self.fast_speed
         else:
-            self.speed = 10.0  # Normal speed
+            self.speed = self.slow_speed
 
-        # Camera rotation
-        if glfw.get_mouse_button(glfw.get_current_context(), glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS:
+        # Mouse look (hold right mouse button)
+        if glfw.get_mouse_button(glfw.get_current_context(), glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS:
             self.yaw += mouse_dx * self.mouse_sensitivity
             self.pitch -= mouse_dy * self.mouse_sensitivity
             self.pitch = max(-math.pi/2, min(math.pi/2, self.pitch))
 
-        # Camera movement
+        # WASD/Space/Shift movement
         forward = [
-            math.cos(self.yaw),
-            math.tan(self.pitch),
-            math.sin(self.yaw)
+            math.cos(self.yaw) * math.cos(self.pitch),
+            math.sin(self.pitch),
+            math.sin(self.yaw) * math.cos(self.pitch)
         ]
         right = [
-            -forward[2], 0, forward[0]
+            -math.sin(self.yaw),
+            0,
+            math.cos(self.yaw)
         ]
         up = [0, 1, 0]
-
         velocity = self.speed * dt
-        if keys.get(glfw.KEY_W): self.pos = [p + f * velocity for p, f in zip(self.pos, forward)]
-        if keys.get(glfw.KEY_S): self.pos = [p - f * velocity for p, f in zip(self.pos, forward)]
-        if keys.get(glfw.KEY_A): self.pos = [p - r * velocity for p, r in zip(self.pos, right)]
-        if keys.get(glfw.KEY_D): self.pos = [p + r * velocity for p, r in zip(self.pos, right)]
-        if keys.get(glfw.KEY_SPACE): self.pos = [p + u * velocity for p, u in zip(self.pos, up)]
-        if keys.get(glfw.KEY_LEFT_SHIFT): self.pos = [p - u * velocity for p, u in zip(self.pos, up)]
-        if keys.get(glfw.KEY_E): self.pos = [p + u * velocity for p, u in zip(self.pos, up)]  # E for up
-        if keys.get(glfw.KEY_Q): self.pos = [p - u * velocity for p, u in zip(self.pos, up)]  # Q for down
+        if keys.get(glfw.KEY_W):
+            self.pos = [p + f * velocity for p, f in zip(self.pos, forward)]
+        if keys.get(glfw.KEY_S):
+            self.pos = [p - f * velocity for p, f in zip(self.pos, forward)]
+        if keys.get(glfw.KEY_A):
+            self.pos = [p - r * velocity for p, r in zip(self.pos, right)]
+        if keys.get(glfw.KEY_D):
+            self.pos = [p + r * velocity for p, r in zip(self.pos, right)]
+        if keys.get(glfw.KEY_SPACE):
+            self.pos = [p + u * velocity for p, u in zip(self.pos, up)]
+        if keys.get(glfw.KEY_LEFT_SHIFT):
+            self.pos = [p - u * velocity for p, u in zip(self.pos, up)]
+        if keys.get(glfw.KEY_E):
+            self.pos = [p + u * velocity for p, u in zip(self.pos, up)]
+        if keys.get(glfw.KEY_Q):
+            self.pos = [p - u * velocity for p, u in zip(self.pos, up)]
+
+        # Mouse wheel for fast forward/backward
+        if mouse_wheel != 0:
+            self.pos = [p + f * mouse_wheel * self.speed * 0.5 for p, f in zip(self.pos, forward)]
 
     def apply_view(self):
-        dir_x = math.cos(self.yaw)
-        dir_z = math.sin(self.yaw)
-        dir_y = math.tan(self.pitch)
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
+        look_x = self.pos[0] + math.cos(self.yaw) * math.cos(self.pitch)
+        look_y = self.pos[1] + math.sin(self.pitch)
+        look_z = self.pos[2] + math.sin(self.yaw) * math.cos(self.pitch)
         gluLookAt(
-            *self.pos,
-            self.pos[0] + dir_x, self.pos[1] + dir_y, self.pos[2] + dir_z,
+            self.pos[0], self.pos[1], self.pos[2],
+            look_x, look_y, look_z,
             0, 1, 0
         )
 
@@ -118,15 +138,17 @@ class EditorRenderer:
         ]
         
         self.floor_texture = load_texture("assets/Stone_floor.jpg")
-        self.entities = []
-        # Create a floor of blocks (entities)
-        for x in range(EDITOR_WIDTH):
-            for z in range(EDITOR_DEPTH):
-                self.entities.append(Entity(position=(x, 0, z), type="block"))
+        # Entities: type, position, size/radius
+        self.entities = [
+            {"type": "cube", "position": (5, 1, 5), "size": 2},
+            {"type": "sphere", "position": (10, 1, 10), "radius": 1.5}
+        ]
         
         # Pre-render text textures
         self.text_textures = {}
         self.update_text_textures()
+        self.rasteriser = Rasteriser()
+        self.use_rasteriser = False
 
     def update_text_textures(self):
         # Update all text textures
@@ -165,21 +187,48 @@ class EditorRenderer:
         
         return {"id": tex_id, "width": width, "height": height}
 
-    def render(self, dt, keys, mouse_dx, mouse_dy, mouse_pos):
+    def render(self, dt, keys, mouse_dx, mouse_dy, mouse_pos, mouse_wheel=0):
+        if self.use_rasteriser:
+            self.rasteriser.render()
+            return
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+
+        # --- 3D WORLD ---
+        # Set up perspective projection
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
+        gluPerspective(60, WIDTH / HEIGHT, 0.1, 1000.0)
+        glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
 
-        # Update camera
-        self.camera.update(dt, keys, mouse_dx, mouse_dy, mouse_pos)
+        # Update camera and apply view
+        self.camera.update(dt, keys, mouse_dx, mouse_dy, mouse_pos, mouse_wheel)
         self.camera.apply_view()
 
-        # Draw world
+        # Draw world (floor, entities, grid, etc.)
         self.draw_world()
         if self.grid_visible:
             self.draw_grid()
-        
-        # Draw UI
+
+        # --- UI ---
+        # Switch to orthographic projection for UI
+        glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
+        glLoadIdentity()
+        glOrtho(0, WIDTH, HEIGHT, 0, -1, 1)
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadIdentity()
+        glDisable(GL_DEPTH_TEST)
+
         self.draw_ui()
+
+        # Restore matrices and state
+        glEnable(GL_DEPTH_TEST)
+        glPopMatrix()
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        glMatrixMode(GL_MODELVIEW)
 
     def draw_world(self):
         glEnable(GL_DEPTH_TEST)
@@ -188,9 +237,24 @@ class EditorRenderer:
         # Draw textured floor
         glBindTexture(GL_TEXTURE_2D, self.floor_texture)
         glColor3f(1, 1, 1)
+        for x in range(EDITOR_WIDTH):
+            for z in range(EDITOR_DEPTH):
+                glPushMatrix()
+                glTranslatef(x, 0, z)
+                glBegin(GL_QUADS)
+                glTexCoord2f(0, 0); glVertex3f(0, 0, 0)
+                glTexCoord2f(1, 0); glVertex3f(1, 0, 0)
+                glTexCoord2f(1, 1); glVertex3f(1, 0, 1)
+                glTexCoord2f(0, 1); glVertex3f(0, 0, 1)
+                glEnd()
+                glPopMatrix()
+
+        # Draw entities
         for entity in self.entities:
-            if entity.type == "block":
-                self.draw_entity_block(entity)
+            if entity["type"] == "cube":
+                self.draw_cube(entity["position"], entity["size"])
+            elif entity["type"] == "sphere":
+                self.draw_sphere(entity["position"], entity["radius"])
 
         # Highlight selected block
         if self.camera.selected_entity:
@@ -200,47 +264,57 @@ class EditorRenderer:
         if self.camera.placement_pos and self.tools["place"]["active"]:
             self.draw_placement_preview(self.camera.placement_pos)
 
-    def draw_entity_block(self, entity):
+    def draw_cube(self, position, size):
+        x, y, z = position
+        s = size / 2.0
         glPushMatrix()
-        glTranslatef(*entity.position)
-        glRotatef(entity.rotation[1], 0, 1, 0)
-        glRotatef(entity.rotation[0], 1, 0, 0)
-        glRotatef(entity.rotation[2], 0, 0, 1)
-        glScalef(*entity.scale)
-        glColor3f(1, 1, 1)
-        # Draw textured cube (6 faces)
+        glTranslatef(x, y, z)
+        glScalef(s, s, s)
+        glColor3f(0.8, 0.2, 0.2)
+        # Draw a unit cube centered at origin
         glBegin(GL_QUADS)
         # Front
-        glTexCoord2f(0, 0); glVertex3f(0, 0, 0)
-        glTexCoord2f(1, 0); glVertex3f(1, 0, 0)
-        glTexCoord2f(1, 1); glVertex3f(1, 1, 0)
-        glTexCoord2f(0, 1); glVertex3f(0, 1, 0)
+        glVertex3f(-1, -1,  1)
+        glVertex3f( 1, -1,  1)
+        glVertex3f( 1,  1,  1)
+        glVertex3f(-1,  1,  1)
         # Back
-        glTexCoord2f(0, 0); glVertex3f(0, 0, 1)
-        glTexCoord2f(1, 0); glVertex3f(1, 0, 1)
-        glTexCoord2f(1, 1); glVertex3f(1, 1, 1)
-        glTexCoord2f(0, 1); glVertex3f(0, 1, 1)
+        glVertex3f(-1, -1, -1)
+        glVertex3f(-1,  1, -1)
+        glVertex3f( 1,  1, -1)
+        glVertex3f( 1, -1, -1)
         # Left
-        glTexCoord2f(0, 0); glVertex3f(0, 0, 0)
-        glTexCoord2f(1, 0); glVertex3f(0, 0, 1)
-        glTexCoord2f(1, 1); glVertex3f(0, 1, 1)
-        glTexCoord2f(0, 1); glVertex3f(0, 1, 0)
+        glVertex3f(-1, -1, -1)
+        glVertex3f(-1, -1,  1)
+        glVertex3f(-1,  1,  1)
+        glVertex3f(-1,  1, -1)
         # Right
-        glTexCoord2f(0, 0); glVertex3f(1, 0, 0)
-        glTexCoord2f(1, 0); glVertex3f(1, 0, 1)
-        glTexCoord2f(1, 1); glVertex3f(1, 1, 1)
-        glTexCoord2f(0, 1); glVertex3f(1, 1, 0)
+        glVertex3f( 1, -1, -1)
+        glVertex3f( 1,  1, -1)
+        glVertex3f( 1,  1,  1)
+        glVertex3f( 1, -1,  1)
         # Top
-        glTexCoord2f(0, 0); glVertex3f(0, 1, 0)
-        glTexCoord2f(1, 0); glVertex3f(1, 1, 0)
-        glTexCoord2f(1, 1); glVertex3f(1, 1, 1)
-        glTexCoord2f(0, 1); glVertex3f(0, 1, 1)
+        glVertex3f(-1,  1, -1)
+        glVertex3f(-1,  1,  1)
+        glVertex3f( 1,  1,  1)
+        glVertex3f( 1,  1, -1)
         # Bottom
-        glTexCoord2f(0, 0); glVertex3f(0, 0, 0)
-        glTexCoord2f(1, 0); glVertex3f(1, 0, 1)
-        glTexCoord2f(1, 1); glVertex3f(1, 1, 1)
-        glTexCoord2f(0, 1); glVertex3f(1, 1, 0)
+        glVertex3f(-1, -1, -1)
+        glVertex3f( 1, -1, -1)
+        glVertex3f( 1, -1,  1)
+        glVertex3f(-1, -1,  1)
         glEnd()
+        glPopMatrix()
+
+    def draw_sphere(self, position, radius, slices=16, stacks=16):
+        from OpenGL.GLU import gluNewQuadric, gluSphere, gluDeleteQuadric
+        x, y, z = position
+        glPushMatrix()
+        glTranslatef(x, y, z)
+        glColor3f(0.2, 0.2, 0.8)
+        quad = gluNewQuadric()
+        gluSphere(quad, radius, slices, stacks)
+        gluDeleteQuadric(quad)
         glPopMatrix()
 
     def draw_entity_highlight(self, entity):
@@ -346,16 +420,6 @@ class EditorRenderer:
         glEnable(GL_DEPTH_TEST)
 
     def draw_ui(self):
-        glDisable(GL_DEPTH_TEST)
-        glMatrixMode(GL_PROJECTION)
-        glPushMatrix()
-        glLoadIdentity()
-        glOrtho(0, WIDTH, HEIGHT, 0, -1, 1)
-        
-        glMatrixMode(GL_MODELVIEW)
-        glPushMatrix()
-        glLoadIdentity()
-        
         # Draw hotkey menu button
         hotkey_button_width = 120
         hotkey_button_height = 40
@@ -441,20 +505,16 @@ class EditorRenderer:
                 if x <= mouse_x <= x + button_width and y <= mouse_y <= y + button_height:
                     self.draw_text(tool["tooltip"], (x, y - 5))
         
-        # Draw coordinates and grid size
+        # Draw coordinates, grid size, camera mode, and camera rotation
         info_text = [
             f"X: {self.camera.pos[0]:.1f} Y: {self.camera.pos[1]:.1f} Z: {self.camera.pos[2]:.1f}",
-            f"Grid Size: {self.grid_sizes[self.current_grid_index]}"
+            f"Grid Size: {self.grid_sizes[self.current_grid_index]}",
+            f"Mode: {'Fly' if self.camera.fly_mode else 'Orbit'}",
+            f"Yaw: {math.degrees(self.camera.yaw):.1f}°  Pitch: {math.degrees(self.camera.pitch):.1f}°"
         ]
         
         for i, text in enumerate(info_text):
-            self.draw_text(text, (padding, padding + i * (self.font_size + 5)))
-        
-        glPopMatrix()
-        glMatrixMode(GL_PROJECTION)
-        glPopMatrix()
-        glMatrixMode(GL_MODELVIEW)
-        glEnable(GL_DEPTH_TEST)
+            self.draw_text(text, (10, 10 + i * (self.font_size + 5)))
 
     def draw_text(self, text, center):
         if text not in self.text_textures:
@@ -536,3 +596,6 @@ class EditorRenderer:
         # Toggle tooltips
         elif key == glfw.KEY_T:
             self.show_tooltips = not self.show_tooltips
+        # Toggle rasteriser
+        elif key == glfw.KEY_R:
+            self.use_rasteriser = not self.use_rasteriser

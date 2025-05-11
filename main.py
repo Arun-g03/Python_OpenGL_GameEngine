@@ -14,6 +14,7 @@ from rendering.main_menu import MainMenu
 from rendering.editor_render import EditorRenderer
 from rendering.game_render import GameRenderer
 from enum import Enum, auto
+import math
 
 class GameState(Enum):
     MENU = auto()
@@ -66,7 +67,7 @@ def main():
         player = Player()
         player.x = 8
         player.y = 8
-        player.z = 0
+        player.z = 5  # Start higher up
         player.rot_x = 0
         player.rot_y = 0
         player.angle = 0  # Initialize player angle
@@ -86,46 +87,33 @@ def main():
         # Game state
         game_state = GameState.MENU
         keys = {}
+        mouse_buttons = {}  # Track mouse button states
         
         def transition_to_game():
             nonlocal game_state
             try:
-                logger.log("Starting game transition...")
-                
                 # Reset player position and rotation
-                logger.log("Resetting player state...")
                 player.x = 8
                 player.y = 8
-                player.z = 0
+                player.z = 5  # Start higher up
                 player.rot_x = 0
                 player.rot_y = 0
-                player.angle = 0
-                logger.log(f"Player position reset to: x={player.x}, y={player.y}, z={player.z}")
-                logger.log(f"Player rotation reset to: rot_x={player.rot_x}, rot_y={player.rot_y}, angle={player.angle}")
+                player.angle = 0  # Reset player angle
                 
                 # Reinitialize game renderer
-                logger.log("Reinitializing game renderer...")
                 game_renderer.cleanup()
                 game_renderer.__init__(player, game_map, floor_texture)
-                logger.log("Game renderer reinitialized")
                 
                 # Switch to game state
-                logger.log("Switching to game state...")
                 game_state = GameState.PLAYING
-                
                 # Hide cursor
-                logger.log("Hiding cursor...")
                 glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_DISABLED)
                 
                 # Reset mouse position
-                logger.log("Resetting mouse position...")
                 glfw.set_cursor_pos(window, WIDTH//2, HEIGHT//2)
-                
-                logger.log("Game transition completed successfully")
             except Exception as e:
                 logger.log(f"Error in transition_to_game: {e}")
-                logger.log("Falling back to menu state")
-                game_state = GameState.MENU
+                game_state = GameState.MENU  # Fall back to menu if transition fails
         
         # Set up input callbacks
         def key_callback(window, key, scancode, action, mods):
@@ -147,6 +135,8 @@ def main():
 
         def mouse_button_callback(window, button, action, mods):
             nonlocal game_state
+            mouse_buttons[button] = action
+            
             if action == glfw.PRESS:
                 x, y = glfw.get_cursor_pos(window)
                 if game_state == GameState.MENU:
@@ -174,12 +164,32 @@ def main():
                     elif result == "quit":
                         logger.log("Quit button clicked")
                         glfw.set_window_should_close(window, True)
+                elif game_state == GameState.EDITOR:
+                    editor_renderer.handle_click((x, y))
+                    editor_renderer.handle_block_edit((x, y))
 
+        def cursor_position_callback(window, xpos, ypos):
+            nonlocal game_state
+            if game_state == GameState.PLAYING:
+                # Calculate mouse movement relative to center
+                center_x, center_y = WIDTH // 2, HEIGHT // 2
+                dx = xpos - center_x
+                dy = ypos - center_y
+                
+                # Update player rotation based on mouse movement
+                if dx != 0 or dy != 0:
+                    player.rot_y += dx * 0.002  # Adjust sensitivity as needed
+                    player.rot_x += dy * 0.002
+                    player.rot_x = max(-math.pi/2, min(math.pi/2, player.rot_x))  # Clamp vertical rotation
+                    player.angle = player.rot_y  # Update player angle
+                    
+                    # Reset cursor to center
+                    glfw.set_cursor_pos(window, center_x, center_y)
+
+        # Set up callbacks
         glfw.set_key_callback(window, key_callback)
         glfw.set_mouse_button_callback(window, mouse_button_callback)
-        
-        # Mouse position tracking
-        last_mouse_x, last_mouse_y = glfw.get_cursor_pos(window)
+        glfw.set_cursor_pos_callback(window, cursor_position_callback)
         
         # Main loop
         while not glfw.window_should_close(window):
@@ -189,11 +199,8 @@ def main():
                 delta_time = current_time - (getattr(main, 'last_time', current_time))
                 main.last_time = current_time
                 
-                # Calculate mouse movement
+                # Get current mouse position
                 current_mouse_x, current_mouse_y = glfw.get_cursor_pos(window)
-                mouse_dx = current_mouse_x - last_mouse_x
-                mouse_dy = current_mouse_y - last_mouse_y
-                last_mouse_x, last_mouse_y = current_mouse_x, current_mouse_y
                 
                 # Clear the screen
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -202,13 +209,11 @@ def main():
                 if game_state == GameState.MENU:
                     main_menu.draw()
                 elif game_state == GameState.PLAYING:
-                    logger.log("Updating game state...")
-                    player.update(delta_time, mouse_dx, mouse_dy)
+                    player.update(delta_time, keys, mouse_buttons)
                     game_renderer.update(delta_time)
-                    logger.log("Rendering game...")
                     game_renderer.render(delta_time)
                 elif game_state == GameState.EDITOR:
-                    editor_renderer.render(delta_time, keys, mouse_dx, mouse_dy, (current_mouse_x, current_mouse_y))
+                    editor_renderer.render(delta_time, keys, 0, 0, (current_mouse_x, current_mouse_y))
                 elif game_state == GameState.PAUSED:
                     game_renderer.render(delta_time)  # Render game in background
                     pause_menu.draw()

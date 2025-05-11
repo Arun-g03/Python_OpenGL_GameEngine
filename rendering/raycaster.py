@@ -109,15 +109,16 @@ class Raycaster:
                     logger.log(f"Calculating ray {x}: angle={ray_angle}")
                     
                     # Cast ray
-                    distance = self.cast_ray(ray_angle)
-                    logger.log(f"Ray {x}: distance={distance}")
-                    
-                    # Calculate wall height
-                    wall_height = (TILE_SIZE_M * HEIGHT) / (distance * math.cos(ray_angle - self.player.angle))
-                    logger.log(f"Ray {x}: wall_height={wall_height}")
-                    
-                    # Draw wall slice
-                    self.draw_wall_slice(x, wall_height)
+                    ray_info = self.cast_ray(ray_angle)
+                    if ray_info:
+                        logger.log(f"Ray {x}: distance={ray_info['distance']}")
+                        # Calculate wall height
+                        wall_height = (TILE_SIZE_M * HEIGHT) / (ray_info['distance'] * math.cos(ray_angle - self.player.angle))
+                        logger.log(f"Ray {x}: wall_height={wall_height}")
+                        # Draw wall slice
+                        self.draw_wall_slice(x, wall_height, ray_info)
+                    else:
+                        logger.log(f"Ray {x}: no hit")
                 except Exception as e:
                     logger.log(f"Error processing ray {x}: {e}")
                     continue
@@ -125,85 +126,99 @@ class Raycaster:
         except Exception as e:
             logger.log(f"Error in cast_rays: {e}")
 
-    def cast_ray(self, angle):
+    def cast_ray(self, ray_angle):
         try:
-            logger.log(f"Starting ray cast at angle {angle}")
-            # Ray starting position
-            ray_x = self.player.x
-            ray_y = self.player.y
-            logger.log(f"Ray start position: x={ray_x}, y={ray_y}")
+            # Calculate ray direction
+            ray_dir_x = math.cos(ray_angle)
+            ray_dir_y = math.sin(ray_angle)
             
-            # Ray direction
-            ray_dir_x = math.cos(angle)
-            ray_dir_y = math.sin(angle)
-            logger.log(f"Ray direction: dx={ray_dir_x}, dy={ray_dir_y}")
+            # Calculate ray start position (in world coordinates)
+            ray_x = self.player.x / TILE_SIZE_M
+            ray_y = self.player.y / TILE_SIZE_M
+            
+            # Calculate step size
+            step_x = 1.0 / abs(ray_dir_x) if ray_dir_x != 0 else float('inf')
+            step_y = 1.0 / abs(ray_dir_y) if ray_dir_y != 0 else float('inf')
+            
+            # Calculate initial distance to next grid line
+            if ray_dir_x < 0:
+                dist_x = (ray_x - int(ray_x)) * step_x
+                step_dir_x = -1
+            else:
+                dist_x = (int(ray_x) + 1 - ray_x) * step_x
+                step_dir_x = 1
+            
+            if ray_dir_y < 0:
+                dist_y = (ray_y - int(ray_y)) * step_y
+                step_dir_y = -1
+            else:
+                dist_y = (int(ray_y) + 1 - ray_y) * step_y
+                step_dir_y = 1
             
             # DDA variables
-            map_x = int(ray_x / TILE_SIZE_M)
-            map_y = int(ray_y / TILE_SIZE_M)
-            logger.log(f"Initial map position: x={map_x}, y={map_y}")
-            
-            # Length of ray from current position to next x or y-side
-            side_dist_x = 0
-            side_dist_y = 0
-            
-            # Length of ray from one x or y-side to next x or y-side
-            delta_dist_x = abs(1 / ray_dir_x) if ray_dir_x != 0 else float('inf')
-            delta_dist_y = abs(1 / ray_dir_y) if ray_dir_y != 0 else float('inf')
-            logger.log(f"Delta distances: dx={delta_dist_x}, dy={delta_dist_y}")
-            
-            # Direction to step in x and y
-            step_x = 1 if ray_dir_x >= 0 else -1
-            step_y = 1 if ray_dir_y >= 0 else -1
-            logger.log(f"Step directions: x={step_x}, y={step_y}")
-            
-            # Perform DDA
+            map_x = int(ray_x)
+            map_y = int(ray_y)
             hit = False
             side = 0  # 0 for x-side, 1 for y-side
-            steps = 0
+            max_steps = 100  # Safety limit
             
-            while not hit and steps < 100:  # Add safety limit
-                steps += 1
-                # Jump to next map square
-                if side_dist_x < side_dist_y:
-                    side_dist_x += delta_dist_x
-                    map_x += step_x
+            # DDA loop
+            for _ in range(max_steps):
+                # Check if ray hit a wall
+                if map_x < 0 or map_x >= len(self.game_map[0]) or map_y < 0 or map_y >= len(self.game_map):
+                    break
+                
+                if self.game_map[map_y][map_x] == 1:
+                    hit = True
+                    break
+                
+                # Move to next grid line
+                if dist_x < dist_y:
+                    dist_x += step_x
+                    map_x += step_dir_x
                     side = 0
                 else:
-                    side_dist_y += delta_dist_y
-                    map_y += step_y
+                    dist_y += step_y
+                    map_y += step_dir_y
                     side = 1
-                
-                logger.log(f"Step {steps}: map_x={map_x}, map_y={map_y}, side={side}")
-                
-                # Check if ray has hit a wall
-                if 0 <= map_x < len(self.game_map[0][0]) and 0 <= map_y < len(self.game_map[0]):
-                    if self.game_map[0][map_y][map_x] == 1:
-                        hit = True
-                        logger.log(f"Hit wall at map_x={map_x}, map_y={map_y}")
+            
+            if hit:
+                # Calculate distance to wall
+                if side == 0:
+                    perp_wall_dist = (map_x - ray_x + (1 - step_dir_x) / 2) / ray_dir_x
                 else:
-                    logger.log(f"Ray out of bounds at map_x={map_x}, map_y={map_y}")
-                    break
+                    perp_wall_dist = (map_y - ray_y + (1 - step_dir_y) / 2) / ray_dir_y
+                
+                # Convert to world units
+                perp_wall_dist *= TILE_SIZE_M
+                
+                # Calculate wall height
+                line_height = int(HEIGHT / perp_wall_dist)
+                
+                # Calculate lowest and highest pixel to fill
+                draw_start = -line_height / 2 + HEIGHT / 2
+                if draw_start < 0:
+                    draw_start = 0
+                draw_end = line_height / 2 + HEIGHT / 2
+                if draw_end >= HEIGHT:
+                    draw_end = HEIGHT - 1
+                
+                return {
+                    'distance': perp_wall_dist,
+                    'side': side,
+                    'line_height': line_height,
+                    'draw_start': draw_start,
+                    'draw_end': draw_end,
+                    'map_x': map_x,
+                    'map_y': map_y
+                }
             
-            if not hit:
-                logger.log("Ray did not hit any wall")
-                return 1.0  # Return safe default distance
-            
-            # Calculate distance to wall
-            if side == 0:
-                distance = (map_x - ray_x/TILE_SIZE_M + (1 - step_x)/2) / ray_dir_x
-            else:
-                distance = (map_y - ray_y/TILE_SIZE_M + (1 - step_y)/2) / ray_dir_y
-            
-            final_distance = distance * TILE_SIZE_M
-            logger.log(f"Final distance: {final_distance}")
-            return final_distance
-            
+            return None
         except Exception as e:
             logger.log(f"Error in cast_ray: {e}")
-            return 1.0  # Return a safe default distance
+            return None
 
-    def draw_wall_slice(self, x, height):
+    def draw_wall_slice(self, x, height, ray_info):
         try:
             # Calculate wall slice coordinates
             wall_top = (HEIGHT - height) / 2
@@ -237,5 +252,11 @@ class Raycaster:
             glDisable(GL_TEXTURE_2D)
         except Exception as e:
             print(f"Error drawing textured floor: {e}")
+
+    def enable_opengl_states(self):
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_TEXTURE_2D)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
 
