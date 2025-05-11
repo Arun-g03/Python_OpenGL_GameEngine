@@ -1,15 +1,29 @@
-import pygame
+from PIL import Image
+import numpy as np
 from OpenGL.GL import *
 
 def load_texture(path):
-    surface = pygame.image.load(path)
-    image = pygame.image.tostring(surface, "RGBA", 1)
-    width, height = surface.get_size()
+    # Load image using PIL
+    image = Image.open(path)
+    # Convert to RGBA if not already
+    if image.mode != 'RGBA':
+        image = image.convert('RGBA')
+    
+    # Get image data as numpy array
+    image_data = np.array(image)
+    width, height = image.size
 
+    # Generate and bind texture
     tex_id = glGenTextures(1)
     glBindTexture(GL_TEXTURE_2D, tex_id)
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image)
-
+    
+    # Set texture parameters
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+    
+    # Upload texture data
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data)
+    
     return tex_id

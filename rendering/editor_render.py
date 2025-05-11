@@ -1,10 +1,12 @@
+import glfw
 import math
-import pygame
 import numpy as np
 from OpenGL.GL import *
 from OpenGL.GLU import gluLookAt, gluUnProject
 from utils.settings import *
 from rendering.texture_loader import load_texture
+from PIL import Image, ImageDraw, ImageFont
+import os
 
 EDITOR_WIDTH = 32
 EDITOR_HEIGHT = 8
@@ -32,13 +34,13 @@ class EditorCamera:
 
     def update(self, dt, keys, mouse_dx, mouse_dy, mouse_pos):
         # Camera speed control
-        if keys[pygame.K_LCTRL]:
+        if keys.get(glfw.KEY_LEFT_CONTROL):
             self.speed = 20.0  # Fast movement
         else:
             self.speed = 10.0  # Normal speed
 
         # Camera rotation
-        if pygame.mouse.get_pressed()[1]:  # Middle mouse button
+        if glfw.get_mouse_button(glfw.get_current_context(), glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS:
             self.yaw += mouse_dx * self.mouse_sensitivity
             self.pitch -= mouse_dy * self.mouse_sensitivity
             self.pitch = max(-math.pi/2, min(math.pi/2, self.pitch))
@@ -55,14 +57,14 @@ class EditorCamera:
         up = [0, 1, 0]
 
         velocity = self.speed * dt
-        if keys[pygame.K_w]: self.pos = [p + f * velocity for p, f in zip(self.pos, forward)]
-        if keys[pygame.K_s]: self.pos = [p - f * velocity for p, f in zip(self.pos, forward)]
-        if keys[pygame.K_a]: self.pos = [p - r * velocity for p, r in zip(self.pos, right)]
-        if keys[pygame.K_d]: self.pos = [p + r * velocity for p, r in zip(self.pos, right)]
-        if keys[pygame.K_SPACE]: self.pos = [p + u * velocity for p, u in zip(self.pos, up)]
-        if keys[pygame.K_LSHIFT]: self.pos = [p - u * velocity for p, u in zip(self.pos, up)]
-        if keys[pygame.K_e]: self.pos = [p + u * velocity for p, u in zip(self.pos, up)]  # E for up
-        if keys[pygame.K_q]: self.pos = [p - u * velocity for p, u in zip(self.pos, up)]  # Q for down
+        if keys.get(glfw.KEY_W): self.pos = [p + f * velocity for p, f in zip(self.pos, forward)]
+        if keys.get(glfw.KEY_S): self.pos = [p - f * velocity for p, f in zip(self.pos, forward)]
+        if keys.get(glfw.KEY_A): self.pos = [p - r * velocity for p, r in zip(self.pos, right)]
+        if keys.get(glfw.KEY_D): self.pos = [p + r * velocity for p, r in zip(self.pos, right)]
+        if keys.get(glfw.KEY_SPACE): self.pos = [p + u * velocity for p, u in zip(self.pos, up)]
+        if keys.get(glfw.KEY_LEFT_SHIFT): self.pos = [p - u * velocity for p, u in zip(self.pos, up)]
+        if keys.get(glfw.KEY_E): self.pos = [p + u * velocity for p, u in zip(self.pos, up)]  # E for up
+        if keys.get(glfw.KEY_Q): self.pos = [p - u * velocity for p, u in zip(self.pos, up)]  # Q for down
 
     def apply_view(self):
         dir_x = math.cos(self.yaw)
@@ -84,12 +86,18 @@ class EditorRenderer:
             "rotate": {"icon": "🔄", "active": False, "tooltip": "Rotate Block (Coming Soon)"},
             "scale": {"icon": "📏", "active": False, "tooltip": "Scale Block (Coming Soon)"}
         }
-        self.font = pygame.font.SysFont("Arial", 24)
+        
+        # Initialize font
+        self.font_size = 24
+        self.font_path = os.path.join("assets", "fonts", "arial.ttf")
+        self.font = ImageFont.truetype(self.font_path, self.font_size)
+        
         self.grid_visible = True
         self.show_tooltips = True
         self.grid_sizes = [1, 2, 4, 8]
         self.current_grid_index = 0
-        self.show_hotkeys = False  # New: track hotkey menu visibility
+        self.show_hotkeys = False
+        
         self.hotkeys = [
             ("Movement", [
                 "WASD - Move camera",
@@ -108,12 +116,54 @@ class EditorRenderer:
                 "ESC - Return to menu"
             ])
         ]
-        self.floor_texture = load_texture("assets/Stone_floor.jpg")  # Load the floor texture
+        
+        self.floor_texture = load_texture("assets/Stone_floor.jpg")
         self.entities = []
         # Create a floor of blocks (entities)
         for x in range(EDITOR_WIDTH):
             for z in range(EDITOR_DEPTH):
                 self.entities.append(Entity(position=(x, 0, z), type="block"))
+        
+        # Pre-render text textures
+        self.text_textures = {}
+        self.update_text_textures()
+
+    def update_text_textures(self):
+        # Update all text textures
+        self.text_textures = {}
+        # Add tool icons
+        for tool in self.tools.values():
+            self.text_textures[tool["icon"]] = self.create_text_texture(tool["icon"])
+            self.text_textures[tool["tooltip"]] = self.create_text_texture(tool["tooltip"])
+        # Add hotkey texts
+        for section_title, hotkeys in self.hotkeys:
+            self.text_textures[section_title] = self.create_text_texture(section_title)
+            for hotkey in hotkeys:
+                self.text_textures[hotkey] = self.create_text_texture(hotkey)
+
+    def create_text_texture(self, text):
+        # Create a new image with transparent background
+        bbox = self.font.getbbox(text)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        image = Image.new('RGBA', (text_width, text_height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(image)
+        
+        # Draw text
+        draw.text((0, 0), text, font=self.font, fill=(255, 255, 255, 255))
+        
+        # Convert to OpenGL texture
+        image_data = np.array(image)
+        width, height = image.size
+        
+        # Generate texture
+        tex_id = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, tex_id)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image_data)
+        
+        return {"id": tex_id, "width": width, "height": height}
 
     def render(self, dt, keys, mouse_dx, mouse_dy, mouse_pos):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -324,29 +374,7 @@ class EditorRenderer:
         
         # Draw hotkey button text
         text = "Show Hotkeys" if not self.show_hotkeys else "Hide Hotkeys"
-        text_surface = self.font.render(text, True, (255, 255, 255))
-        text_data = pygame.image.tostring(text_surface, "RGBA", True)
-        width, height = text_surface.get_size()
-        
-        tex_id = glGenTextures(1)
-        glBindTexture(GL_TEXTURE_2D, tex_id)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, text_data)
-        
-        glEnable(GL_TEXTURE_2D)
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        glColor4f(1, 1, 1, 1)
-        glBegin(GL_QUADS)
-        glTexCoord2f(0, 1); glVertex2f(hotkey_x + (hotkey_button_width - width)/2, hotkey_y + (hotkey_button_height - height)/2)
-        glTexCoord2f(1, 1); glVertex2f(hotkey_x + (hotkey_button_width + width)/2, hotkey_y + (hotkey_button_height - height)/2)
-        glTexCoord2f(1, 0); glVertex2f(hotkey_x + (hotkey_button_width + width)/2, hotkey_y + (hotkey_button_height + height)/2)
-        glTexCoord2f(0, 0); glVertex2f(hotkey_x + (hotkey_button_width - width)/2, hotkey_y + (hotkey_button_height + height)/2)
-        glEnd()
-        glDisable(GL_BLEND)
-        
-        glDeleteTextures([tex_id])
+        self.draw_text(text, (hotkey_x + hotkey_button_width/2, hotkey_y + hotkey_button_height/2))
 
         # Draw hotkey menu if visible
         if self.show_hotkeys:
@@ -377,59 +405,13 @@ class EditorRenderer:
             current_y = menu_y + padding
             for section_title, hotkeys in self.hotkeys:
                 # Draw section title
-                title_surface = self.font.render(section_title, True, (255, 255, 255))
-                title_data = pygame.image.tostring(title_surface, "RGBA", True)
-                title_width, title_height = title_surface.get_size()
-                
-                tex_id = glGenTextures(1)
-                glBindTexture(GL_TEXTURE_2D, tex_id)
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, title_width, title_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, title_data)
-                
-                glEnable(GL_TEXTURE_2D)
-                glEnable(GL_BLEND)
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-                glColor4f(1, 1, 1, 1)
-                glBegin(GL_QUADS)
-                glTexCoord2f(0, 1); glVertex2f(menu_x + padding, current_y)
-                glTexCoord2f(1, 1); glVertex2f(menu_x + padding + title_width, current_y)
-                glTexCoord2f(1, 0); glVertex2f(menu_x + padding + title_width, current_y + title_height)
-                glTexCoord2f(0, 0); glVertex2f(menu_x + padding, current_y + title_height)
-                glEnd()
-                glDisable(GL_BLEND)
-                
-                glDeleteTextures([tex_id])
-                
-                current_y += title_height + padding
+                self.draw_text(section_title, (menu_x + padding, current_y))
+                current_y += self.text_textures[section_title]["height"] + padding
                 
                 # Draw hotkeys
                 for hotkey in hotkeys:
-                    hotkey_surface = self.font.render(hotkey, True, (200, 200, 200))
-                    hotkey_data = pygame.image.tostring(hotkey_surface, "RGBA", True)
-                    hotkey_width, hotkey_height = hotkey_surface.get_size()
-                    
-                    tex_id = glGenTextures(1)
-                    glBindTexture(GL_TEXTURE_2D, tex_id)
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, hotkey_width, hotkey_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, hotkey_data)
-                    
-                    glEnable(GL_TEXTURE_2D)
-                    glEnable(GL_BLEND)
-                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-                    glColor4f(1, 1, 1, 1)
-                    glBegin(GL_QUADS)
-                    glTexCoord2f(0, 1); glVertex2f(menu_x + padding * 2, current_y)
-                    glTexCoord2f(1, 1); glVertex2f(menu_x + padding * 2 + hotkey_width, current_y)
-                    glTexCoord2f(1, 0); glVertex2f(menu_x + padding * 2 + hotkey_width, current_y + hotkey_height)
-                    glTexCoord2f(0, 0); glVertex2f(menu_x + padding * 2, current_y + hotkey_height)
-                    glEnd()
-                    glDisable(GL_BLEND)
-                    
-                    glDeleteTextures([tex_id])
-                    
-                    current_y += hotkey_height + padding
+                    self.draw_text(hotkey, (menu_x + padding * 2, current_y))
+                    current_y += self.text_textures[hotkey]["height"] + padding
         
         # Draw tool buttons
         button_width = 60
@@ -451,65 +433,13 @@ class EditorRenderer:
             glEnd()
             
             # Draw tool icon
-            text_surface = self.font.render(tool["icon"], True, (255, 255, 255))
-            text_data = pygame.image.tostring(text_surface, "RGBA", True)
-            width, height = text_surface.get_size()
-            
-            tex_id = glGenTextures(1)
-            glBindTexture(GL_TEXTURE_2D, tex_id)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, text_data)
-            
-            glEnable(GL_TEXTURE_2D)
-            glEnable(GL_BLEND)
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-            glColor4f(1, 1, 1, 1)
-            glBegin(GL_QUADS)
-            glTexCoord2f(0, 1); glVertex2f(x + (button_width - width)/2, y + (button_height - height)/2)
-            glTexCoord2f(1, 1); glVertex2f(x + (button_width + width)/2, y + (button_height - height)/2)
-            glTexCoord2f(1, 0); glVertex2f(x + (button_width + width)/2, y + (button_height + height)/2)
-            glTexCoord2f(0, 0); glVertex2f(x + (button_width - width)/2, y + (button_height + height)/2)
-            glEnd()
-            glDisable(GL_BLEND)
-            
-            glDeleteTextures([tex_id])
+            self.draw_text(tool["icon"], (x + button_width/2, y + button_height/2))
 
             # Draw tooltip
             if self.show_tooltips:
-                mouse_pos = pygame.mouse.get_pos()
-                if x <= mouse_pos[0] <= x + button_width and y <= mouse_pos[1] <= y + button_height:
-                    tooltip_surface = self.font.render(tool["tooltip"], True, (255, 255, 255))
-                    tooltip_data = pygame.image.tostring(tooltip_surface, "RGBA", True)
-                    tooltip_width, tooltip_height = tooltip_surface.get_size()
-                    
-                    tooltip_tex_id = glGenTextures(1)
-                    glBindTexture(GL_TEXTURE_2D, tooltip_tex_id)
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tooltip_width, tooltip_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, tooltip_data)
-                    
-                    glEnable(GL_TEXTURE_2D)
-                    glEnable(GL_BLEND)
-                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-                    glColor4f(0.2, 0.2, 0.2, 0.9)
-                    glBegin(GL_QUADS)
-                    glTexCoord2f(0, 1); glVertex2f(x, y - tooltip_height - 5)
-                    glTexCoord2f(1, 1); glVertex2f(x + tooltip_width, y - tooltip_height - 5)
-                    glTexCoord2f(1, 0); glVertex2f(x + tooltip_width, y - 5)
-                    glTexCoord2f(0, 0); glVertex2f(x, y - 5)
-                    glEnd()
-                    
-                    glColor4f(1, 1, 1, 1)
-                    glBegin(GL_QUADS)
-                    glTexCoord2f(0, 1); glVertex2f(x, y - tooltip_height - 5)
-                    glTexCoord2f(1, 1); glVertex2f(x + tooltip_width, y - tooltip_height - 5)
-                    glTexCoord2f(1, 0); glVertex2f(x + tooltip_width, y - 5)
-                    glTexCoord2f(0, 0); glVertex2f(x, y - 5)
-                    glEnd()
-                    glDisable(GL_BLEND)
-                    
-                    glDeleteTextures([tooltip_tex_id])
+                mouse_x, mouse_y = glfw.get_cursor_pos(glfw.get_current_context())
+                if x <= mouse_x <= x + button_width and y <= mouse_y <= y + button_height:
+                    self.draw_text(tool["tooltip"], (x, y - 5))
         
         # Draw coordinates and grid size
         info_text = [
@@ -518,35 +448,34 @@ class EditorRenderer:
         ]
         
         for i, text in enumerate(info_text):
-            text_surface = self.font.render(text, True, (255, 255, 255))
-            text_data = pygame.image.tostring(text_surface, "RGBA", True)
-            width, height = text_surface.get_size()
-            
-            tex_id = glGenTextures(1)
-            glBindTexture(GL_TEXTURE_2D, tex_id)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, text_data)
-            
-            glEnable(GL_TEXTURE_2D)
-            glEnable(GL_BLEND)
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-            glColor4f(1, 1, 1, 1)
-            glBegin(GL_QUADS)
-            glTexCoord2f(0, 1); glVertex2f(padding, padding + i * (height + 5))
-            glTexCoord2f(1, 1); glVertex2f(padding + width, padding + i * (height + 5))
-            glTexCoord2f(1, 0); glVertex2f(padding + width, padding + (i + 1) * (height + 5))
-            glTexCoord2f(0, 0); glVertex2f(padding, padding + (i + 1) * (height + 5))
-            glEnd()
-            glDisable(GL_BLEND)
-            
-            glDeleteTextures([tex_id])
+            self.draw_text(text, (padding, padding + i * (self.font_size + 5)))
         
         glPopMatrix()
         glMatrixMode(GL_PROJECTION)
         glPopMatrix()
         glMatrixMode(GL_MODELVIEW)
         glEnable(GL_DEPTH_TEST)
+
+    def draw_text(self, text, center):
+        if text not in self.text_textures:
+            self.text_textures[text] = self.create_text_texture(text)
+            
+        texture = self.text_textures[text]
+        width, height = texture["width"], texture["height"]
+        x, y = center[0] - width/2, center[1] - height/2
+
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, texture["id"])
+        glColor4f(1, 1, 1, 1)
+        
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex2f(x, y)
+        glTexCoord2f(1, 0); glVertex2f(x + width, y)
+        glTexCoord2f(1, 1); glVertex2f(x + width, y + height)
+        glTexCoord2f(0, 1); glVertex2f(x, y + height)
+        glEnd()
+        
+        glDisable(GL_TEXTURE_2D)
 
     def handle_click(self, pos):
         # Check hotkey menu button
@@ -599,11 +528,11 @@ class EditorRenderer:
 
     def handle_key(self, key):
         # Grid size control
-        if key == pygame.K_g:
+        if key == glfw.KEY_G:
             self.current_grid_index = (self.current_grid_index + 1) % len(self.grid_sizes)
         # Toggle grid visibility
-        elif key == pygame.K_h:
+        elif key == glfw.KEY_H:
             self.grid_visible = not self.grid_visible
         # Toggle tooltips
-        elif key == pygame.K_t:
+        elif key == glfw.KEY_T:
             self.show_tooltips = not self.show_tooltips
