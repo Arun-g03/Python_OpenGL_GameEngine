@@ -246,6 +246,17 @@ class EditorRenderer:
         # Apply camera view
         self.camera.apply_view()
 
+        cam_pos = Vector3(self.camera.pos)
+        look_dir = Vector3([
+            math.cos(self.camera.yaw) * math.cos(self.camera.pitch),
+            math.sin(self.camera.pitch),
+            math.sin(self.camera.yaw) * math.cos(self.camera.pitch)
+        ])
+
+        view = Matrix44.look_at(cam_pos, cam_pos + look_dir, Vector3([0, 1, 0]))
+        projection = Matrix44.perspective_projection(60, WIDTH / HEIGHT, 0.1, 1000.0)
+
+        self.rasteriser.draw_sky(view, projection)
         # Draw world (floor, entities, grid, etc.)
         self.draw_world()
         if self.grid_visible:

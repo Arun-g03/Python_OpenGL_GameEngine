@@ -1,7 +1,6 @@
 import OpenGL.GL.shaders as shaders
 from OpenGL.GL import *
 
-
 # PBR-style vertex and fragment shaders (GLSL 330 core)
 VERTEX_SHADER_SRC = """
 #version 330 core
@@ -60,30 +59,41 @@ void main() {
 }
 """
 
-SKYBOX_VERTEX_SHADER_SRC = """
+SKY_VERTEX_SHADER_SRC = """
 #version 330 core
 layout(location = 0) in vec3 aPos;
-out vec3 TexCoords;
+out vec3 WorldDir;
 
-uniform mat4 view;
 uniform mat4 projection;
+uniform mat4 view;
 
 void main() {
-    TexCoords = aPos;
+    WorldDir = normalize(aPos);  // Normalize for proper sphere mapping
     vec4 pos = projection * view * vec4(aPos, 1.0);
-    gl_Position = pos.xyww;
+    gl_Position = pos.xyww;  // Force z to be 1.0 (furthest depth)
 }
 """
 
-SKYBOX_FRAGMENT_SHADER_SRC = """
+SKY_FRAGMENT_SHADER_SRC = """
 #version 330 core
-in vec3 TexCoords;
+in vec3 WorldDir;
 out vec4 FragColor;
 
-uniform samplerCube skybox;
+uniform sampler2D hdrTexture;
+uniform float skyBrightness;
+
+vec2 equirectangularUV(vec3 dir) {
+    float u = 0.5 + atan(dir.z, dir.x) / (2.0 * 3.14159);
+    float v = 0.5 - asin(dir.y) / 3.14159;
+    return vec2(u, v);
+}
 
 void main() {
-    FragColor = texture(skybox, TexCoords);
+    vec3 dir = normalize(WorldDir);
+    vec2 uv = equirectangularUV(dir);
+    vec3 color = texture(hdrTexture, uv).rgb;
+    color *= skyBrightness;
+    FragColor = vec4(color, 1.0);
 }
 """
 

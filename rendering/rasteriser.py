@@ -2,15 +2,21 @@ import math
 import numpy as np
 from OpenGL.GL import *
 from pyrr import Matrix44, Vector3
-from rendering.my_shaders import compile_shader_program, Material
+from rendering.my_shaders import SKY_VERTEX_SHADER_SRC, SKY_FRAGMENT_SHADER_SRC, compile_shader_program, Material
+
 
 from PIL import Image
+import cv2
+    
 
 class Rasteriser:
     def __init__(self):
         self.shader_program = compile_shader_program()
         self.cube_vao, self.vertex_count = self.create_cube_geometry()
         self.sphere_vao, self.sphere_vertex_count = self.create_sphere_geometry()
+        self.sky_texture = self.load_hdr_texture("assets/justSky.hdr")
+        
+        self.sky_shader = compile_shader_program(SKY_VERTEX_SHADER_SRC, SKY_FRAGMENT_SHADER_SRC)
         self.floor_texture = None
         self.build_floor_mesh()
 
@@ -228,21 +234,59 @@ class Rasteriser:
 
     
 
-    def load_cubemap(faces: list[str]) -> int:
-        texture_id = glGenTextures(1)
-        glBindTexture(GL_TEXTURE_CUBE_MAP, texture_id)
+    
 
-        for i, face in enumerate(faces):
-            image = Image.open(face)
-            image = image.convert('RGB')
-            data = image.tobytes()
-            width, height = image.size
-            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data)
+    
+    def load_hdr_texture(self, path):
+        hdr_image = cv2.imread(path, cv2.IMREAD_UNCHANGED)  # float32 HDR
+        if hdr_image is None:
+            raise RuntimeError(f"Failed to load HDR texture: {path}")
 
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE)
+        hdr_image = cv2.cvtColor(hdr_image, cv2.COLOR_BGR2RGB)  # OpenCV loads as BGR
 
-        return texture_id
+        height, width, _ = hdr_image.shape
+
+        tex_id = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, tex_id)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0,
+                    GL_RGB, GL_FLOAT, hdr_image)
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+
+        glBindTexture(GL_TEXTURE_2D, 0)
+        print("Loaded HDR texture")
+        return tex_id
+
+
+    def draw_sky(self, view, projection, brightness=1):
+        glUseProgram(self.sky_shader)
+        glDepthMask(GL_FALSE)  # Disable depth writing
+        glDisable(GL_DEPTH_TEST)  # Disable depth testing for sky
+
+        glBindVertexArray(self.sphere_vao)
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.sky_texture)
+        glUniform1i(glGetUniformLocation(self.sky_shader, "hdrTexture"), 0)
+
+        # Set the brightness uniform
+        glUniform1f(glGetUniformLocation(self.sky_shader, "skyBrightness"), brightness)
+
+        # Create view matrix without translation (sky sphere centered on camera)
+        view_no_translation = view.copy()
+        view_no_translation[3, :3] = 0  # Remove translation component
+
+        # Set uniforms
+        glUniformMatrix4fv(glGetUniformLocation(self.sky_shader, "view"), 1, GL_FALSE, view_no_translation.astype('float32'))
+        glUniformMatrix4fv(glGetUniformLocation(self.sky_shader, "projection"), 1, GL_FALSE, projection.astype('float32'))
+
+        # Draw the sky sphere
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, self.sphere_vertex_count)
+
+        # Restore state
+        glEnable(GL_DEPTH_TEST)
+        glDepthMask(GL_TRUE)
+        glBindVertexArray(0)
+        glUseProgram(0)
