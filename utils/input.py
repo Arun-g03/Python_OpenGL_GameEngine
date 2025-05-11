@@ -1,22 +1,46 @@
 import glfw
 from enum import Enum, auto
+import math
 
+# --- Game States ---
 class GameState(Enum):
     MENU = auto()
     PLAYING = auto()
     EDITOR = auto()
     PAUSED = auto()
 
-# Input state
+# --- Input State ---
 keys = {}
 mouse_buttons = {}
-mouse_dx = 0
-mouse_dy = 0
+mouse_dx, mouse_dy = 0, 0
 last_mouse_pos = (0, 0)
-mouse_button_pressed = {}  # Track button press events
+mouse_button_pressed = {}
 current_game_state = GameState.MENU
 is_right_mouse_down = False
+place_block_pressed = False
+delete_block_pressed = False
 
+# --- Action Bindings ---
+bindings = {
+    GameState.EDITOR: {
+        "move_forward": glfw.KEY_W,
+        "move_back": glfw.KEY_S,
+        "move_left": glfw.KEY_A,
+        "move_right": glfw.KEY_D,
+        "move_up": glfw.KEY_E,
+        "move_down": glfw.KEY_Q,
+        "fast_mode": glfw.KEY_LEFT_CONTROL,
+        "camera_look": glfw.MOUSE_BUTTON_RIGHT,
+    },
+    GameState.PLAYING: {
+        "jump": glfw.KEY_SPACE,
+        "shoot": glfw.MOUSE_BUTTON_LEFT,
+    },
+    GameState.MENU: {},
+    GameState.PAUSED: {},
+}
+
+# --- Game State Setter ---
 def set_game_state(state):
     global current_game_state
     current_game_state = state
@@ -24,86 +48,141 @@ def set_game_state(state):
 def get_game_state():
     return current_game_state
 
-# Key callback
+# --- GLFW Callbacks ---
 def key_callback(window, key, scancode, action, mods):
     keys[key] = action
-    if key == glfw.KEY_ESCAPE:
-        if action == glfw.PRESS:
-            if current_game_state == GameState.PLAYING:
-                set_game_state(GameState.PAUSED)
-                glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_NORMAL)
-            elif current_game_state == GameState.PAUSED:
-                set_game_state(GameState.PLAYING)
-                glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_DISABLED)
-            elif current_game_state == GameState.EDITOR:
-                set_game_state(GameState.MENU)
-                glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_NORMAL)
 
-# Mouse button callback
 def mouse_button_callback(window, button, action, mods):
-    global is_right_mouse_down, last_mouse_pos
+    global is_right_mouse_down, last_mouse_pos, place_block_pressed, delete_block_pressed
     mouse_buttons[button] = action
+    
+    # Handle button press
     if action == glfw.PRESS:
         mouse_button_pressed[button] = True
+        
+        # Right mouse button handling
         if button == glfw.MOUSE_BUTTON_RIGHT:
             is_right_mouse_down = True
             if current_game_state == GameState.EDITOR:
                 glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_DISABLED)
-                # Reset mouse position to center when starting rotation
-                center_x, center_y = glfw.get_window_size(window)
-                center_x //= 2
-                center_y //= 2
-                glfw.set_cursor_pos(window, center_x, center_y)
-                last_mouse_pos = (center_x, center_y)
+                last_mouse_pos = glfw.get_cursor_pos(window)
+                delete_block_pressed = True
+        
+        # Left mouse button handling
+        elif button == glfw.MOUSE_BUTTON_LEFT:
+            if current_game_state == GameState.PLAYING:
+                # Handle shooting in playing state
+                pass
+            elif current_game_state == GameState.EDITOR:
+                place_block_pressed = True
+                
+        # Middle mouse button handling
+        elif button == glfw.MOUSE_BUTTON_MIDDLE:
+            if current_game_state == GameState.EDITOR:
+                # Handle panning/orbit in editor state
+                pass
+            elif current_game_state == GameState.PLAYING:
+                # Handle alternate actions in playing state
+                pass
+    
+    # Handle button release
     elif action == glfw.RELEASE:
         mouse_button_pressed[button] = False
+        
+        # Right mouse button handling
         if button == glfw.MOUSE_BUTTON_RIGHT:
             is_right_mouse_down = False
             if current_game_state == GameState.EDITOR:
                 glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_NORMAL)
+        
+        # Left mouse button handling
+        elif button == glfw.MOUSE_BUTTON_LEFT:
+            if current_game_state == GameState.PLAYING:
+                # Handle end of shooting in playing state
+                pass
+            elif current_game_state == GameState.EDITOR:
+                # Handle end of selection/placement in editor state
+                pass
+                
+        # Middle mouse button handling
+        elif button == glfw.MOUSE_BUTTON_MIDDLE:
+            if current_game_state == GameState.EDITOR:
+                # Handle end of panning/orbit in editor state
+                pass
+            elif current_game_state == GameState.PLAYING:
+                # Handle end of alternate actions in playing state
+                pass
 
-# Cursor position callback
 def cursor_position_callback(window, xpos, ypos):
     global mouse_dx, mouse_dy, last_mouse_pos
+
+    width, height = glfw.get_window_size(window)
+    center_x, center_y = width // 2, height // 2
+
     if is_right_mouse_down and current_game_state == GameState.EDITOR:
-        # Calculate delta from center of screen
-        center_x, center_y = glfw.get_window_size(window)
-        center_x //= 2
-        center_y //= 2
+        # Always calculate deltas from the center (FPS-style look)
         mouse_dx = xpos - center_x
         mouse_dy = ypos - center_y
-        # Reset cursor to center
+
+        # Reset the cursor to center AFTER reading deltas
         glfw.set_cursor_pos(window, center_x, center_y)
     else:
-        mouse_dx = xpos - last_mouse_pos[0]
-        mouse_dy = ypos - last_mouse_pos[1]
+        # Track actual mouse movement for UI, if needed
+        mouse_dx = 0
+        mouse_dy = 0
+
     last_mouse_pos = (xpos, ypos)
 
-# Reset mouse deltas (call after consuming them)
+
+
+# --- Input Query API ---
 def reset_mouse_delta():
     global mouse_dx, mouse_dy
     mouse_dx = 0
     mouse_dy = 0
 
-# Utility functions
-def is_key_down(key):
-    return keys.get(key) == glfw.PRESS
-
-def is_mouse_down(button):
-    return mouse_buttons.get(button) == glfw.PRESS
-
-def was_mouse_pressed(button):
-    """Check if a mouse button was just pressed this frame"""
-    was_pressed = mouse_button_pressed.get(button, False)
-    if was_pressed:
-        mouse_button_pressed[button] = False  # Reset the press state
-    return was_pressed
+def get_mouse_delta():
+    return mouse_dx, mouse_dy
 
 def get_mouse_position():
     return last_mouse_pos
 
-def get_mouse_delta():
-    return mouse_dx, mouse_dy
+def is_key_down(key):
+    return keys.get(key, glfw.RELEASE) == glfw.PRESS
+
+def is_mouse_down(button):
+    return mouse_buttons.get(button, glfw.RELEASE) == glfw.PRESS
+
+def was_mouse_pressed(button):
+    """Detect one-frame mouse press."""
+    was_pressed = mouse_button_pressed.get(button, False)
+    if was_pressed:
+        mouse_button_pressed[button] = False
+    return was_pressed
 
 def is_right_mouse_held():
     return is_right_mouse_down
+
+# --- Action Mapping ---
+def is_action_active(action_name):
+    state_bindings = bindings.get(current_game_state, {})
+    key = state_bindings.get(action_name)
+    if key is None:
+        return False
+    if isinstance(key, int):
+        return is_key_down(key) or is_mouse_down(key)
+    return False
+
+def was_place_block_pressed():
+    global place_block_pressed
+    if place_block_pressed:
+        place_block_pressed = False
+        return True
+    return False
+
+def was_delete_block_pressed():
+    global delete_block_pressed
+    if delete_block_pressed:
+        delete_block_pressed = False
+        return True
+    return False

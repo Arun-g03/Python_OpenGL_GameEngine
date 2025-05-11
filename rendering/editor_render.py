@@ -28,7 +28,7 @@ class EditorCamera:
         self.yaw = 0
         self.roll = 0
         self.speed = 10.0
-        self.mouse_sensitivity = 0.002
+        self.mouse_sensitivity = 0.005
         self.fast_speed = 20.0
         self.slow_speed = 10.0
         self.selected_entity = None
@@ -48,14 +48,18 @@ class EditorCamera:
 
         # Mouse look (hold right mouse button)
         if input.is_right_mouse_held():
-            # Apply rotation based on mouse movement
-            self.yaw += mouse_dx * self.mouse_sensitivity * 0.1  # Reduced sensitivity
-            self.pitch -= mouse_dy * self.mouse_sensitivity * 0.1  # Reduced sensitivity
-            # Clamp pitch to prevent over-rotation
-            self.pitch = max(-math.pi/2, min(math.pi/2, self.pitch))
-            print(f"Camera rotation - Yaw: {math.degrees(self.yaw):.1f}°, Pitch: {math.degrees(self.pitch):.1f}°")
+            sensitivity = self.mouse_sensitivity
+            self.yaw += mouse_dx * sensitivity
+            self.pitch -= mouse_dy * sensitivity
 
-        # Calculate movement vectors
+            # Clamp pitch to just under ±90°
+            max_pitch = math.radians(89.0)
+            self.pitch = max(-max_pitch, min(max_pitch, self.pitch))
+
+            # Wrap yaw
+            self.yaw = self.yaw % (2 * math.pi)
+
+        # Calculate movement vectors based on current rotation
         forward = [
             math.cos(self.yaw) * math.cos(self.pitch),
             math.sin(self.pitch),
@@ -91,17 +95,40 @@ class EditorCamera:
         if mouse_wheel != 0:
             self.pos = [p + f * mouse_wheel * self.speed * 0.5 for p, f in zip(self.pos, forward)]
 
+        # Only print if values have changed
+        if not hasattr(self, '_last_pos') or self.pos != self._last_pos or \
+           not hasattr(self, '_last_yaw') or self.yaw != self._last_yaw or \
+           not hasattr(self, '_last_pitch') or self.pitch != self._last_pitch or \
+           not hasattr(self, '_last_speed') or self.speed != self._last_speed:
+            
+            print(f"Position: {self.pos}")
+            print(f"Yaw: {math.degrees(self.yaw):.1f}°")
+            print(f"Pitch: {math.degrees(self.pitch):.1f}°") 
+            print(f"Current speed: {self.speed}")
+            
+            # Store current values
+            self._last_pos = self.pos.copy() if hasattr(self.pos, 'copy') else self.pos
+            self._last_yaw = self.yaw
+            self._last_pitch = self.pitch
+            self._last_speed = self.speed
+
     def apply_view(self):
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
+        
+        # Calculate look direction based on yaw and pitch
         look_x = self.pos[0] + math.cos(self.yaw) * math.cos(self.pitch)
         look_y = self.pos[1] + math.sin(self.pitch)
         look_z = self.pos[2] + math.sin(self.yaw) * math.cos(self.pitch)
+        
+        # Apply camera transformation
         gluLookAt(
-            self.pos[0], self.pos[1], self.pos[2],
-            look_x, look_y, look_z,
-            0, 1, 0
+            self.pos[0], self.pos[1], self.pos[2],  # Camera position
+            look_x, look_y, look_z,                 # Look at point
+            0, 1, 0                                 # Up vector
         )
+        
+       
 
 class EditorRenderer:
     def __init__(self):
@@ -202,6 +229,12 @@ class EditorRenderer:
 
         # Update camera with current input state
         self.camera.update(dt, keys, mouse_dx, mouse_dy, mouse_pos, mouse_wheel)
+
+        # --- Block placement/deletion ---
+        if input.was_place_block_pressed():
+            self.handle_block_edit("place")
+        if input.was_delete_block_pressed():
+            self.handle_block_edit("delete")
 
         # --- 3D WORLD ---
         # Set up perspective projection
@@ -578,22 +611,18 @@ class EditorRenderer:
         
         return False
 
-    def handle_block_edit(self, pos):
+    def handle_block_edit(self, action):
         if not self.camera.placement_pos:
             return
-        
         x, y, z = self.camera.placement_pos
-        
-        # Place block
-        if self.tools["place"]["active"]:
-            if 0 <= x < EDITOR_WIDTH and 0 <= y < EDITOR_HEIGHT and 0 <= z < EDITOR_DEPTH:
-                self.entities[z * EDITOR_WIDTH + y * EDITOR_WIDTH + x] = Entity(position=(x, 0, z), type="block")
-        
-        # Delete block
-        elif self.tools["delete"]["active"] and self.camera.selected_entity:
-            x, y, z = self.camera.selected_entity.position
-            if 0 <= x < EDITOR_WIDTH and 0 <= y < EDITOR_HEIGHT and 0 <= z < EDITOR_DEPTH:
-                self.entities[z * EDITOR_WIDTH + y * EDITOR_WIDTH + x] = None
+        if action == "place" and self.tools["place"]["active"]:
+            # Place block logic here
+            print(f"Placing block at {self.camera.placement_pos}")
+            # (Add your block placement logic)
+        elif action == "delete" and self.tools["delete"]["active"]:
+            # Delete block logic here
+            print(f"Deleting block at {self.camera.placement_pos}")
+            # (Add your block deletion logic)
 
     def handle_key(self, key):
         # Grid size control

@@ -50,6 +50,11 @@ def init_glfw():
     # Set initial cursor mode
     glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_NORMAL)
     
+    # Register input callbacks
+    glfw.set_key_callback(window, input.key_callback)
+    glfw.set_mouse_button_callback(window, input.mouse_button_callback)
+    glfw.set_cursor_pos_callback(window, input.cursor_position_callback)
+    
     return window
 
 def main():
@@ -104,11 +109,6 @@ def main():
                 logger.log(f"Error in transition_to_game: {e}")
                 set_game_state(GameState.MENU)  # Fall back to menu if transition fails
         
-        # Set up callbacks
-        glfw.set_key_callback(window, input.key_callback)
-        glfw.set_mouse_button_callback(window, input.mouse_button_callback)
-        glfw.set_cursor_pos_callback(window, input.cursor_position_callback)
-        
         # Main loop
         while not glfw.window_should_close(window):
             try:
@@ -121,18 +121,24 @@ def main():
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
                 
                 # Update and render based on game state
+                glfw.poll_events()
                 current_state = get_game_state()
                 if current_state == GameState.MENU:
                     glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_NORMAL)
-                    # Check for menu updates
                     result = main_menu.update()
                     if result == "start":
                         logger.log("Start game button clicked")
-                        transition_to_game()
+                        set_game_state(GameState.PLAYING)
+                        glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_DISABLED)
+                        glfw.set_cursor_pos(window, WIDTH//2, HEIGHT//2)
                     elif result == "editor":
                         logger.log("Editor button clicked")
                         set_game_state(GameState.EDITOR)
                         glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_NORMAL)
+                        glfw.set_cursor_pos(window, WIDTH//2, HEIGHT//2)
+                    elif result == "options":
+                        logger.log("Options button clicked")
+                        # TODO: Implement options menu
                     elif result == "quit":
                         logger.log("Quit button clicked")
                         glfw.set_window_should_close(window, True)
@@ -150,8 +156,7 @@ def main():
                 # Swap front and back buffers
                 glfw.swap_buffers(window)
                 
-                # Poll for and process events
-                glfw.poll_events()
+               
                 # Reset mouse delta at the end of the frame
                 input.reset_mouse_delta()
             except Exception as e:
