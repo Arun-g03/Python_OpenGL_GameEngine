@@ -1,205 +1,262 @@
 import math
 from OpenGL.GL import *
-from OpenGL.GLU import gluLookAt
+from OpenGL.GLU import *
 from utils.settings import *
-from world.map import MAP_WIDTH, MAP_HEIGHT, MAP_DEPTH  # include depth now
-
+from utils.logger import logger
 
 class Raycaster:
-
-    """
-    Raycaster class for rendering the game world.
-    
-    """
     def __init__(self, player, game_map):
+        logger.log("Initializing raycaster...")
         self.player = player
-        self.map = game_map
-        map_center_x = MAP_WIDTH * TILE_SIZE_M / 2
-        map_center_y = MAP_HEIGHT * TILE_SIZE_M / 2
-        self.light_pos = (map_center_x, map_center_y)
-        self.ray_cosines = [math.cos(-FOV/2 + i * DELTA_ANGLE) for i in range(NUM_RAYS)]
+        self.game_map = game_map
+        self.floor_texture_id = None
+        self.sky_color = (0.5, 0.7, 1.0)  # Light blue sky color
+        
+        # Validate game map
+        if not game_map or not isinstance(game_map, list) or len(game_map) == 0:
+            logger.log("Error: Invalid game map provided to raycaster")
+            raise ValueError("Invalid game map provided to raycaster")
+        
+        # Ensure player has required attributes
+        if not hasattr(player, 'x') or not hasattr(player, 'y') or not hasattr(player, 'angle'):
+            logger.log("Error: Player missing required attributes")
+            raise ValueError("Player missing required attributes")
+        
+        logger.log("Raycaster initialized successfully")
 
-    def cast_ray(self, angle):
-        ox, oz = self.player.x / TILE_SIZE_M, self.player.y / TILE_SIZE_M
-        map_x, map_z = int(ox), int(oz)
+    def set_floor_texture(self, texture_id):
+        logger.log("Setting floor texture...")
+        if not texture_id:
+            logger.log("Warning: Setting null floor texture")
+        self.floor_texture_id = texture_id
+        logger.log("Floor texture set successfully")
 
-        sin_a = math.sin(angle)
-        cos_a = math.cos(angle)
-
-        delta_dist_x = abs(1 / cos_a) if cos_a != 0 else float('inf')
-        delta_dist_z = abs(1 / sin_a) if sin_a != 0 else float('inf')
-
-        step_x = 1 if cos_a >= 0 else -1
-        step_z = 1 if sin_a >= 0 else -1
-
-        side_dist_x = (map_x + 1 - ox if step_x > 0 else ox - map_x) * delta_dist_x
-        side_dist_z = (map_z + 1 - oz if step_z > 0 else oz - map_z) * delta_dist_z
-
-        for _ in range(MAX_DEPTH):
-            if side_dist_x < side_dist_z:
-                map_x += step_x
-                side_dist_x += delta_dist_x
-                hit_distance = side_dist_x - delta_dist_x
-                wall_side = 'vertical'
-            else:
-                map_z += step_z
-                side_dist_z += delta_dist_z
-                hit_distance = side_dist_z - delta_dist_z
-                wall_side = 'horizontal'
-
-            if 0 <= map_x < MAP_WIDTH and 0 <= map_z < MAP_DEPTH:
-                for y in range(MAP_HEIGHT):
-                    if self.map[map_z][y][map_x] == 1:
-                        return hit_distance * TILE_SIZE_M, wall_side
-
-        return MAX_DEPTH, 'none'
-
-    def draw_3d_floor_grid(self):
-        glColor3f(0.0, 1.0, 0.0)
-        glBegin(GL_LINES)
-
-        for z in range(MAP_DEPTH):
-            z_pos = z * TILE_SIZE_M
-            glVertex3f(0, 0, z_pos)
-            glVertex3f(MAP_WIDTH * TILE_SIZE_M, 0, z_pos)
-
-        for x in range(MAP_WIDTH):
-            x_pos = x * TILE_SIZE_M
-            glVertex3f(x_pos, 0, 0)
-            glVertex3f(x_pos, 0, MAP_DEPTH * TILE_SIZE_M)
-
-        glEnd()
-
-
-    def draw_light_source(self):
-        light_screen_x = WIDTH // 2
-        light_screen_y = HEIGHT // 2 - int(self.player.vertical_offset)
-
-        glBegin(GL_POINTS)
-        glColor3f(1.0, 1.0, 0.4)
-        glVertex2f(light_screen_x, light_screen_y)
-        glEnd()
-
-    def draw_wall_blocks(self):
-        for z in range(MAP_DEPTH):
-            for y in range(MAP_HEIGHT):
-                for x in range(MAP_WIDTH):
-                    if self.map[z][y][x] == 1:
-                        self.draw_wall_cube(x * TILE_SIZE_M, y * TILE_SIZE_M, z * TILE_SIZE_M
-)
-
-    def draw_wall_cube(self, x, y, z, size=TILE_SIZE_M):
-        glColor3f(0.5, 0.5, 0.5)
-        glBegin(GL_QUADS)
-
-        # Front face
-        glVertex3f(x, y, z)
-        glVertex3f(x + size, y, z)
-        glVertex3f(x + size, y + size, z)
-        glVertex3f(x, y + size, z)
-
-        # Back face
-        glVertex3f(x, y, z + size)
-        glVertex3f(x + size, y, z + size)
-        glVertex3f(x + size, y + size, z + size)
-        glVertex3f(x, y + size, z + size)
-
-        # Left
-        glVertex3f(x, y, z)
-        glVertex3f(x, y, z + size)
-        glVertex3f(x, y + size, z + size)
-        glVertex3f(x, y + size, z)
-
-        # Right
-        glVertex3f(x + size, y, z)
-        glVertex3f(x + size, y, z + size)
-        glVertex3f(x + size, y + size, z + size)
-        glVertex3f(x + size, y + size, z)
-
-        # Top
-        glVertex3f(x, y + size, z)
-        glVertex3f(x + size, y + size, z)
-        glVertex3f(x + size, y + size, z + size)
-        glVertex3f(x, y + size, z + size)
-
-        # Bottom
-        glVertex3f(x, y, z)
-        glVertex3f(x + size, y, z)
-        glVertex3f(x + size, y, z + size)
-        glVertex3f(x, y, z + size)
-
-        glEnd()
+    def update(self, delta_time):
+        # Update any raycaster-specific state if needed
+        pass
 
     def render(self):
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        glLoadIdentity()
+        try:
+            logger.log("Starting raycaster render...")
+            # Save current matrices
+            glMatrixMode(GL_PROJECTION)
+            glPushMatrix()
+            glLoadIdentity()
+            glOrtho(0, WIDTH, HEIGHT, 0, -1, 1)
+            
+            glMatrixMode(GL_MODELVIEW)
+            glPushMatrix()
+            glLoadIdentity()
 
-        cam_x = self.player.x
-        cam_y = self.player.eye_height
-        cam_z = self.player.y
+            # Draw sky
+            logger.log("Drawing sky...")
+            self.draw_sky()
+            
+            # Cast rays and draw walls
+            logger.log("Casting rays...")
+            self.cast_rays()
+            
+            # Draw floor if texture is set
+            if self.floor_texture_id:
+                logger.log("Drawing textured floor...")
+                self.draw_textured_floor()
 
-        dir_x = math.cos(self.player.angle)
-        dir_z = math.sin(self.player.angle)
-        dir_y = math.tan(self.player.pitch)  # look up/down by pitching the view
+            # Restore matrices
+            glMatrixMode(GL_PROJECTION)
+            glPopMatrix()
+            glMatrixMode(GL_MODELVIEW)
+            glPopMatrix()
+            
+            # Ensure we're back in modelview mode
+            glMatrixMode(GL_MODELVIEW)
+            logger.log("Raycaster render completed successfully")
+        except Exception as e:
+            logger.log(f"Error in raycaster render: {e}")
+            # Ensure matrices are restored even if there's an error
+            glMatrixMode(GL_PROJECTION)
+            glPopMatrix()
+            glMatrixMode(GL_MODELVIEW)
+            glPopMatrix()
+            glMatrixMode(GL_MODELVIEW)
 
-        gluLookAt(
-            cam_x, cam_y, cam_z,
-            cam_x + dir_x, cam_y + dir_y, cam_z + dir_z,
-            0, 1, 0
-        )
-        self.draw_sky(player_angle=self.player.angle)
-        self.draw_3d_floor_grid()
-        self.draw_wall_blocks()
-        self.draw_light_source()
+    def draw_sky(self):
+        try:
+            glDisable(GL_DEPTH_TEST)
+            glDisable(GL_TEXTURE_2D)
+            
+            # Draw sky as a full-screen quad
+            glColor3f(*self.sky_color)
+            glBegin(GL_QUADS)
+            glVertex2f(0, 0)
+            glVertex2f(WIDTH, 0)
+            glVertex2f(WIDTH, HEIGHT/2)  # Sky only in upper half
+            glVertex2f(0, HEIGHT/2)
+            glEnd()
+            
+            glEnable(GL_DEPTH_TEST)
+            glEnable(GL_TEXTURE_2D)
+        except Exception as e:
+            print(f"Error drawing sky: {e}")
+
+    def cast_rays(self):
+        try:
+            logger.log("Starting ray casting...")
+            # Cast rays for each screen column
+            for x in range(WIDTH):
+                try:
+                    # Calculate ray angle
+                    ray_angle = (self.player.angle - FOV/2) + (x * FOV/WIDTH)
+                    logger.log(f"Calculating ray {x}: angle={ray_angle}")
+                    
+                    # Cast ray
+                    ray_info = self.cast_ray(ray_angle)
+                    if ray_info:
+                        logger.log(f"Ray {x}: distance={ray_info['distance']}")
+                        # Calculate wall height
+                        wall_height = (TILE_SIZE_M * HEIGHT) / (ray_info['distance'] * math.cos(ray_angle - self.player.angle))
+                        logger.log(f"Ray {x}: wall_height={wall_height}")
+                        # Draw wall slice
+                        self.draw_wall_slice(x, wall_height, ray_info)
+                    else:
+                        logger.log(f"Ray {x}: no hit")
+                except Exception as e:
+                    logger.log(f"Error processing ray {x}: {e}")
+                    continue
+            logger.log("Ray casting completed successfully")
+        except Exception as e:
+            logger.log(f"Error in cast_rays: {e}")
+
+    def cast_ray(self, ray_angle):
+        try:
+            # Calculate ray direction
+            ray_dir_x = math.cos(ray_angle)
+            ray_dir_y = math.sin(ray_angle)
+            
+            # Calculate ray start position (in world coordinates)
+            ray_x = self.player.x / TILE_SIZE_M
+            ray_y = self.player.y / TILE_SIZE_M
+            
+            # Calculate step size
+            step_x = 1.0 / abs(ray_dir_x) if ray_dir_x != 0 else float('inf')
+            step_y = 1.0 / abs(ray_dir_y) if ray_dir_y != 0 else float('inf')
+            
+            # Calculate initial distance to next grid line
+            if ray_dir_x < 0:
+                dist_x = (ray_x - int(ray_x)) * step_x
+                step_dir_x = -1
+            else:
+                dist_x = (int(ray_x) + 1 - ray_x) * step_x
+                step_dir_x = 1
+            
+            if ray_dir_y < 0:
+                dist_y = (ray_y - int(ray_y)) * step_y
+                step_dir_y = -1
+            else:
+                dist_y = (int(ray_y) + 1 - ray_y) * step_y
+                step_dir_y = 1
+            
+            # DDA variables
+            map_x = int(ray_x)
+            map_y = int(ray_y)
+            hit = False
+            side = 0  # 0 for x-side, 1 for y-side
+            max_steps = 100  # Safety limit
+            
+            # DDA loop
+            for _ in range(max_steps):
+                # Check if ray hit a wall
+                if map_x < 0 or map_x >= len(self.game_map[0]) or map_y < 0 or map_y >= len(self.game_map):
+                    break
+                
+                if self.game_map[map_y][map_x] == 1:
+                    hit = True
+                    break
+                
+                # Move to next grid line
+                if dist_x < dist_y:
+                    dist_x += step_x
+                    map_x += step_dir_x
+                    side = 0
+                else:
+                    dist_y += step_y
+                    map_y += step_dir_y
+                    side = 1
+            
+            if hit:
+                # Calculate distance to wall
+                if side == 0:
+                    perp_wall_dist = (map_x - ray_x + (1 - step_dir_x) / 2) / ray_dir_x
+                else:
+                    perp_wall_dist = (map_y - ray_y + (1 - step_dir_y) / 2) / ray_dir_y
+                
+                # Convert to world units
+                perp_wall_dist *= TILE_SIZE_M
+                
+                # Calculate wall height
+                line_height = int(HEIGHT / perp_wall_dist)
+                
+                # Calculate lowest and highest pixel to fill
+                draw_start = -line_height / 2 + HEIGHT / 2
+                if draw_start < 0:
+                    draw_start = 0
+                draw_end = line_height / 2 + HEIGHT / 2
+                if draw_end >= HEIGHT:
+                    draw_end = HEIGHT - 1
+                
+                return {
+                    'distance': perp_wall_dist,
+                    'side': side,
+                    'line_height': line_height,
+                    'draw_start': draw_start,
+                    'draw_end': draw_end,
+                    'map_x': map_x,
+                    'map_y': map_y
+                }
+            
+            return None
+        except Exception as e:
+            logger.log(f"Error in cast_ray: {e}")
+            return None
+
+    def draw_wall_slice(self, x, height, ray_info):
+        try:
+            # Calculate wall slice coordinates
+            wall_top = (HEIGHT - height) / 2
+            wall_bottom = (HEIGHT + height) / 2
+            
+            # Draw wall slice
+            glColor3f(0.8, 0.8, 0.8)  # Wall color
+            glBegin(GL_QUADS)
+            glVertex2f(x, wall_top)
+            glVertex2f(x + 1, wall_top)
+            glVertex2f(x + 1, wall_bottom)
+            glVertex2f(x, wall_bottom)
+            glEnd()
+        except Exception as e:
+            print(f"Error drawing wall slice: {e}")
 
     def draw_textured_floor(self):
-        glBindTexture(GL_TEXTURE_2D, self.floor_texture_id)
-        glBegin(GL_QUADS)
-        glColor3f(1, 1, 1)
-
-        for z in range(MAP_DEPTH):
-            for x in range(MAP_WIDTH):
-                glTexCoord2f(0, 0); glVertex3f(x * TILE_SIZE_M, 0, z * TILE_SIZE_M)
-                glTexCoord2f(1, 0); glVertex3f((x + 1) * TILE_SIZE_M, 0, z * TILE_SIZE_M)
-                glTexCoord2f(1, 1); glVertex3f((x + 1) * TILE_SIZE_M, 0, (z + 1) * TILE_SIZE_M)
-                glTexCoord2f(0, 1); glVertex3f(x * TILE_SIZE_M, 0, (z + 1) * TILE_SIZE_M)
-
-        glEnd()
-
-
-    def draw_sky(self, player_angle):
-        glDisable(GL_DEPTH_TEST)
-        glPushMatrix()
-
-        glRotatef(-math.degrees(player_angle), 0, 1, 0)
-
-        glColor3f(0.435, 0.608, 1)
-        slices = 32
-        stacks = 16
-        radius = 2000
-        vertical_offset = -1250  
-
-        for i in range(stacks // 2):
-            lat0 = math.pi * i / stacks / 2
-            lat1 = math.pi * (i + 1) / stacks / 2
-            y0 = radius * math.cos(lat0) + vertical_offset
-            y1 = radius * math.cos(lat1) + vertical_offset
-            r0 = radius * math.sin(lat0)
-            r1 = radius * math.sin(lat1)
-
-            glBegin(GL_QUAD_STRIP)
-            for j in range(slices + 1):
-                lon = 2 * math.pi * j / slices
-                x0 = r0 * math.cos(lon)
-                z0 = r0 * math.sin(lon)
-                x1 = r1 * math.cos(lon)
-                z1 = r1 * math.sin(lon)
-
-                glVertex3f(x0, y0, z0)
-                glVertex3f(x1, y1, z1)
+        try:
+            glEnable(GL_TEXTURE_2D)
+            glBindTexture(GL_TEXTURE_2D, self.floor_texture_id)
+            
+            # Draw floor in 2D mode
+            glColor3f(1, 1, 1)
+            glBegin(GL_QUADS)
+            glTexCoord2f(0, 0); glVertex2f(0, HEIGHT/2)
+            glTexCoord2f(1, 0); glVertex2f(WIDTH, HEIGHT/2)
+            glTexCoord2f(1, 1); glVertex2f(WIDTH, HEIGHT)
+            glTexCoord2f(0, 1); glVertex2f(0, HEIGHT)
             glEnd()
+            
+            glDisable(GL_TEXTURE_2D)
+        except Exception as e:
+            print(f"Error drawing textured floor: {e}")
 
-        glPopMatrix()
+    def enable_opengl_states(self):
         glEnable(GL_DEPTH_TEST)
+        glEnable(GL_TEXTURE_2D)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
 

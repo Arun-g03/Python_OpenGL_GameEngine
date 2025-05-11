@@ -3,8 +3,11 @@ from utils.settings import WIDTH, HEIGHT
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import os
+<<<<<<< HEAD
 from utils import input
 import glfw
+=======
+>>>>>>> 184e0ae88a08a761791b4f243c90d113633599dd
 
 class MainMenu:
     def __init__(self):
@@ -109,6 +112,7 @@ class MainMenu:
         texture = self.text_textures[text]
         width, height = texture["width"], texture["height"]
         x, y = center[0] - width//2, center[1] - height//2
+<<<<<<< HEAD
 
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, texture["id"])
@@ -140,4 +144,33 @@ class MainMenu:
                         return "options"
                     elif i == 3:  # Quit
                         return "quit"
+=======
+
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, texture["id"])
+        glColor4f(1, 1, 1, 1)
+        
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex2f(x, y)
+        glTexCoord2f(1, 0); glVertex2f(x + width, y)
+        glTexCoord2f(1, 1); glVertex2f(x + width, y + height)
+        glTexCoord2f(0, 1); glVertex2f(x, y + height)
+        glEnd()
+        
+        glDisable(GL_TEXTURE_2D)
+
+    def handle_click(self, pos):
+        x, y = pos
+        for i, button in enumerate(self.buttons):
+            bx, by, bw, bh = button["rect"]
+            if (bx <= x <= bx + bw and by <= y <= by + bh):
+                if i == 0:  # Start Game
+                    return "start"
+                elif i == 1:  # Enter Editor
+                    return "editor"
+                elif i == 2:  # Options
+                    return "options"
+                elif i == 3:  # Quit
+                    return "quit"
+>>>>>>> 184e0ae88a08a761791b4f243c90d113633599dd
         return None
