@@ -19,6 +19,7 @@ from .viewport import EditorViewport
 from .menu import EditorMenuBar, EditorToolbar
 from .gizmo import Gizmo
 from .ui_utils import draw_text
+from .editor_UI import MainEditor
 
 
 EDITOR_WIDTH = 32
@@ -175,6 +176,8 @@ class EditorRenderer:
     def __init__(self):
         self.camera = EditorCamera()
         self.gizmo = Gizmo()
+        self.editor = MainEditor()
+        self.editor.show()
         try:
             from utils.settings import WIDTH, HEIGHT
             self.window_width = WIDTH
@@ -313,42 +316,8 @@ class EditorRenderer:
         return {"id": tex_id, "width": width, "height": height}
 
     def render(self, dt, keys, mouse_dx, mouse_dy, mouse_pos, mouse_wheel=0):
-        if self.use_rasteriser:
-            self.rasteriser.render()
-            return
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-
-        # Update camera with current input state
         self.camera.update(dt, keys, mouse_dx, mouse_dy, mouse_pos, mouse_wheel)
-
-        # --- UI DATA SYNC ---
-        self.left_panel.entities = self.entities
-        self.right_panel.selected_entity = self.camera.selected_entity
-        self.bottom_panel.items = self.bottom_panel.scan_assets()
-        self.viewport.camera = self.camera
-        self.top_bar.width = self.window_width
-
-        # --- UI INTERACTION ---
-        if input.was_mouse_clicked():
-            mx, my = input.get_mouse_position()
-            # Handle top bar button clicks
-            action = self.top_bar.handle_click(mx, my)
-            if action:
-                # TODO: Implement actions for file/edit/selection/view/run
-                pass
-            # (Selection logic for panels can be improved to use container hierarchy)
-
-        # Update container sizes
-        self.root_container.width = self.window_width
-        self.root_container.height = self.window_height
-        self.main_area.width = self.window_width
-        self.main_area.height = self.window_height - self.menu_bar.height - self.toolbar.height - self.bottom_panel.height - self.top_bar.height
-        self.viewport.width = max(100, self.window_width - self.left_panel.width - self.right_panel.width)
-        self.viewport.height = self.main_area.height
-        self.bottom_panel.width = self.window_width
-
-        # Draw everything via containers
-        self.root_container.draw()
+        self.editor.update_viewport()
 
     def draw_world(self):
         glEnable(GL_DEPTH_TEST)
