@@ -19,8 +19,10 @@ from utils.input import GameState, set_game_state, get_game_state, get_mouse_pos
 import math
 from utils import input
 from PySide6.QtWidgets import QApplication
-from rendering.editor_renderer.editor_UI import MainEditor
+from rendering.editor_renderer.editor_UI import MainEditor, Scene
 import sys
+
+print("Starting system")
 
 def init_glfw():
     if not glfw.init():
@@ -97,7 +99,9 @@ def main():
         main_menu = MainMenu()
         pause_menu = PauseMenu()
         game_renderer = GameRenderer(player, game_map, floor_texture)
-        editor_renderer = EditorRenderer()
+        scene = Scene()
+        editor = MainEditor(scene)
+        renderer = EditorRenderer(scene, editor)
         
         def transition_to_game():
             try:
@@ -164,7 +168,7 @@ def main():
                     game_renderer.update(delta_time)
                     game_renderer.render(delta_time)
                 elif current_state == GameState.EDITOR:
-                    editor_renderer.render(delta_time, input.keys, *get_mouse_delta(), get_mouse_position())
+                    editor.render(delta_time, input.keys, *get_mouse_delta(), get_mouse_position())
                 elif current_state == GameState.PAUSED:
                     game_renderer.render(delta_time)  # Render game in background
                     pause_menu.draw()
@@ -189,7 +193,8 @@ def main():
         glfw.terminate()
 
 if __name__ == '__main__':
+    scene = Scene()
     app = QApplication(sys.argv)
-    editor = MainEditor()
+    editor = MainEditor(scene)
     editor.show()
     sys.exit(app.exec())

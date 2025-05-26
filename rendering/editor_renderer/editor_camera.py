@@ -3,6 +3,10 @@ import numpy as np
 from OpenGL.GL import *
 from OpenGL.GLU import gluLookAt, gluUnProject, gluPerspective
 from utils.settings import *
+from pyrr import Matrix44, Vector3
+
+    
+
 
 EDITOR_WIDTH = 32
 EDITOR_HEIGHT = 8
@@ -110,36 +114,52 @@ class EditorCamera:
             0, 1, 0                                 # Up vector
         )
 
-    def get_ray_from_mouse(self, mouse_pos):
-        # Convert mouse position to normalized device coordinates
-        x = (2.0 * mouse_pos[0]) / WIDTH - 1.0
-        y = 1.0 - (2.0 * mouse_pos[1]) / HEIGHT
-        z = 1.0
-        ray_clip = np.array([x, y, z, 1.0])
-        
-        # Get view and projection matrices
-        glMatrixMode(GL_PROJECTION)
-        glPushMatrix()
-        glLoadIdentity()
-        gluPerspective(60, WIDTH / HEIGHT, 0.1, 1000.0)
-        projection = glGetFloatv(GL_PROJECTION_MATRIX)
-        glPopMatrix()
-        
-        glMatrixMode(GL_MODELVIEW)
-        glPushMatrix()
-        glLoadIdentity()
-        look_x = self.pos[0] + math.cos(self.yaw) * math.cos(self.pitch)
-        look_y = self.pos[1] + math.sin(self.pitch)
-        look_z = self.pos[2] + math.sin(self.yaw) * math.cos(self.pitch)
-        gluLookAt(self.pos[0], self.pos[1], self.pos[2], look_x, look_y, look_z, 0, 1, 0)
-        view = glGetFloatv(GL_MODELVIEW_MATRIX)
-        glPopMatrix()
-        
-        # Convert to world space
-        ray_eye = np.linalg.inv(projection) @ ray_clip
-        ray_eye = np.array([ray_eye[0], ray_eye[1], -1.0, 0.0])
-        ray_world = np.linalg.inv(view) @ ray_eye
-        ray_world = ray_world[:3]
-        ray_world = ray_world / np.linalg.norm(ray_world)
-        
-        return np.array(self.pos), ray_world 
+    
+
+    def get_ray_from_mouse(self, mouse_pos, viewport_width, viewport_height):
+        x = int(mouse_pos[0])
+        y = int(viewport_height - mouse_pos[1])  # Flip Y for OpenGL
+
+        modelview = glGetDoublev(GL_MODELVIEW_MATRIX)
+        projection = glGetDoublev(GL_PROJECTION_MATRIX)
+        viewport = glGetIntegerv(GL_VIEWPORT)
+
+        # Unproject near and far points
+        near = gluUnProject(x, y, 0.0, modelview, projection, viewport)
+        far  = gluUnProject(x, y, 1.0, modelview, projection, viewport)
+
+        origin = np.array(near, dtype=np.float32)
+        direction = np.array(far, dtype=np.float32) - origin
+        direction = direction / np.linalg.norm(direction)
+
+        return origin, direction
+
+    def get_view_projection_matrices(self, viewport_width, viewport_height):
+        cam_pos = Vector3(self.pos)
+        forward = Vector3([
+            math.cos(self.yaw) * math.cos(self.pitch),
+            math.sin(self.pitch),
+            math.sin(self.yaw) * math.cos(self.pitch)
+        ])
+
+        view = Matrix44.look_at(cam_pos, cam_pos + forward, Vector3([0.0, 1.0, 0.0]))
+        projection = Matrix44.perspective_projection(
+            60.0, viewport_width / viewport_height, 0.1, 1000.0
+        )
+
+        return view, projection
+    
+    def get_view_and_projection(self, viewport_width, viewport_height):
+        cam_pos = Vector3(self.pos)
+        forward = Vector3([
+            math.cos(self.yaw) * math.cos(self.pitch),
+            math.sin(self.pitch),
+            math.sin(self.yaw) * math.cos(self.pitch)
+        ])
+
+        view = Matrix44.look_at(cam_pos, cam_pos + forward, Vector3([0.0, 1.0, 0.0]))
+        projection = Matrix44.perspective_projection(
+            60.0, viewport_width / viewport_height, 0.1, 1000.0
+        )
+
+        return view, projection

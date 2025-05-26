@@ -4,58 +4,140 @@ from OpenGL.GL import *
 # PBR-style vertex and fragment shaders (GLSL 330 core)
 VERTEX_SHADER_SRC = """
 #version 330 core
-layout(location = 0) in vec3 aPos;
-layout(location = 1) in vec3 aNormal;
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec3 aNormal;
 
-out vec3 FragPos;
-out vec3 Normal;
+out vec3 FragPos;  // World space position
+out vec3 Normal;   // World space normal
 
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 
-void main() {
+void main()
+{
+    // Transform position to world space
     FragPos = vec3(model * vec4(aPos, 1.0));
+    
+    // Transform normal to world space
     Normal = mat3(transpose(inverse(model))) * aNormal;
-    gl_Position = projection * view * vec4(FragPos, 1.0);
+    Normal = normalize(Normal);
+    
+    // Transform to clip space for rendering (apply view for camera perspective)
+    gl_Position = projection * view * model * vec4(aPos, 1.0);
 }
 """
 
 FRAGMENT_SHADER_SRC = """
 #version 330 core
+out vec4 FragColor;
+
+in vec3 FragPos;  // World space position
+in vec3 Normal;   // World space normal
 
 struct DirectionalLight {
-    vec3 direction;
+    vec3 direction;  // World space direction
     vec3 color;
     float intensity;
 };
 
-uniform DirectionalLight dirLight;
-
-in vec3 FragPos;
-in vec3 Normal;
-
-out vec4 FragColor;
-
+uniform vec3 viewPos;  // World space camera position
 uniform vec3 baseColor;
 uniform vec3 emissiveColor;
 uniform float metallic;
 uniform float roughness;
 uniform float specular;
 
-uniform vec3 lightDir = normalize(vec3(0.5, 1.0, 0.8));
-uniform vec3 viewPos;
+uniform DirectionalLight dirLight;
 
-void main() {
-    vec3 normal = normalize(Normal);
-    vec3 lightDir = normalize(-dirLight.direction);
-    float diff = max(dot(normal, lightDir), 0.0);
+const float PI = 3.14159265359;
 
-    vec3 diffuse = diff * dirLight.color * dirLight.intensity;
-    vec3 ambient = vec3(0.05) * dirLight.color;
+// PBR functions
+float DistributionGGX(vec3 N, vec3 H, float roughness)
+{
+    float a = roughness*roughness;
+    float a2 = a*a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH*NdotH;
 
-    vec3 finalColor = (ambient + diffuse) * baseColor;
-    FragColor = vec4(finalColor, 1.0);
+    float nom   = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+
+    return nom / denom;
+}
+
+float GeometrySchlickGGX(float NdotV, float roughness)
+{
+    float r = (roughness + 1.0);
+    float k = (r*r) / 8.0;
+
+    float nom   = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+
+    return nom / denom;
+}
+
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
+{
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+
+    return ggx1 * ggx2;
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0)
+{
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+void main()
+{
+    // World space vectors
+    vec3 N = normalize(Normal);
+    vec3 V = normalize(viewPos - FragPos);
+    vec3 L = normalize(-dirLight.direction);
+    vec3 H = normalize(V + L);
+    
+    // Calculate reflectance at normal incidence
+    vec3 F0 = vec3(0.04); 
+    F0 = mix(F0, baseColor, metallic);
+    
+    // Cook-Torrance BRDF
+    float NDF = DistributionGGX(N, H, roughness);   
+    float G   = GeometrySmith(N, V, L, roughness);      
+    vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
+           
+    vec3 kS = F;
+    vec3 kD = vec3(1.0) - kS;
+    kD *= 1.0 - metallic;
+    
+    vec3 numerator    = NDF * G * F; 
+    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+    vec3 specular = numerator / denominator;
+    
+    // Add to outgoing radiance Lo
+    float NdotL = max(dot(N, L), 0.0);        
+    vec3 Lo = (kD * baseColor / PI + specular) * dirLight.color * dirLight.intensity * NdotL;
+    
+    // Ambient lighting
+    vec3 ambient = vec3(0.03) * baseColor;
+    
+    // Add emissive
+    vec3 emissive = emissiveColor;
+    
+    // Final color
+    vec3 color = ambient + Lo + emissive;
+    
+    // HDR tonemapping
+    color = color / (color + vec3(1.0));
+    
+    // Gamma correction
+    color = pow(color, vec3(1.0/2.2));
+    
+    FragColor = vec4(color, 1.0);
 }
 """
 

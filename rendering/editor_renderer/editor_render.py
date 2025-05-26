@@ -37,10 +37,12 @@ class Entity:
 
 
 class EditorRenderer:
-    def __init__(self):
+    def __init__(self, scene, editor):
+        self.scene = scene
+        self.editor = editor
+        print("EditorRenderer initialized")
         self.camera = EditorCamera()
         self.gizmo = Gizmo()
-        self.editor = MainEditor()
         self.editor.show()
         try:
             from utils.settings import WIDTH, HEIGHT
@@ -50,8 +52,8 @@ class EditorRenderer:
             self.window_width = 1280
             self.window_height = 720
 
-        # Create panels
-        self.top_bar = EditorTopBar(self.window_width)
+        """ # Create panels
+        #self.top_bar = EditorTopBar(self.window_width)
         self.menu_bar = EditorMenuBar(self.window_width)
         self.toolbar = EditorToolbar(self.window_width, self.menu_bar.height)
         self.left_panel = SceneHierarchyPanel(0, 0, 250, 100)
@@ -72,7 +74,7 @@ class EditorRenderer:
         self.root_container.add_child(self.toolbar)
         self.root_container.add_child(self.main_area)
         self.root_container.add_child(self.bottom_panel)
-
+ """
         # UI Layout
         self.menu_height = 25
         self.toolbar_height = 40
@@ -137,6 +139,7 @@ class EditorRenderer:
         self.update_text_textures()
         self.rasteriser = Rasteriser()
         self.use_rasteriser = False
+        
 
     def update_text_textures(self):
         # Update all text textures
@@ -184,8 +187,21 @@ class EditorRenderer:
         self.editor.update_viewport()
 
     def draw_world(self):
-        glEnable(GL_DEPTH_TEST)
-
+        print("\n=== DRAW WORLD CALLED ===")
+        if not hasattr(self, "rasteriser") or self.rasteriser is None:
+            print("ERROR: No rasteriser available")
+            return
+            
+        if not hasattr(self.editor, "scene"):
+            print("ERROR: No scene available")
+            return
+            
+        print(f"Scene objects count: {len(self.editor.scene.objects)}")
+        if len(self.editor.scene.objects) == 0:
+            print("WARNING: Scene is empty")
+            return
+            
+        # Get camera position and matrices
         cam_pos = Vector3(self.camera.pos)
         look_dir = Vector3([
             math.cos(self.camera.yaw) * math.cos(self.camera.pitch),
@@ -195,23 +211,41 @@ class EditorRenderer:
         view = Matrix44.look_at(cam_pos, cam_pos + look_dir, Vector3([0, 1, 0]))
         projection = Matrix44.perspective_projection(60, self.viewport_width / self.viewport_height, 0.1, 1000.0)
 
-        # Draw sky
-        self.rasteriser.draw_sky(view, projection)
+        print(f"Camera position: {cam_pos}")
+        print(f"View matrix:\n{view}")
+        print(f"Projection matrix:\n{projection}")
 
-        # Highlight selected block
-        if self.camera.selected_entity:
-            self.draw_entity_highlight(self.camera.selected_entity)
+        # Draw sky first
+        print("Drawing sky...")
+        #self.rasteriser.draw_sky(view, projection)
 
-        # Placement preview
-        if self.camera.placement_pos and self.tools["place"]["active"]:
-            self.draw_placement_preview(self.camera.placement_pos)
+        
+        # Draw all scene objects
+        print("\nDrawing scene objects:")
+        for obj in self.editor.scene.objects:
+            print(f"\nObject: {obj.name}")
+            print(f"  Type: {obj.type}")
+            print(f"  Position: {obj.location}")
+            print(f"  Has mesh: {obj.mesh is not None}")
+            if obj.mesh:
+                print(f"  Mesh vertices: {len(obj.mesh.vertices)//3}")
+                print(f"  Mesh indices: {len(obj.mesh.indices)}")
+                print(f"  Mesh normals: {len(obj.mesh.normals)//3 if obj.mesh.normals else 0}")
+                print(f"  Material: {obj.material}")
 
-        # Draw gizmo if an entity is selected
-        if self.camera.selected_entity:
-            self.gizmo.draw(
-                self.camera.selected_entity.position,
-                self.camera.selected_entity.rotation
-            )
+                print(f"{obj.name} -> obj.location = {obj.location}")
+                
+                self.rasteriser.draw_mesh(
+                    mesh=obj.mesh,
+                    position=obj.location,
+                    rotation=obj.rotation,
+                    scale=obj.scale,
+                    material=obj.material,
+                    view=view,
+                    projection=projection,
+                    camera_pos=cam_pos
+                )
+        print("=== DRAW WORLD COMPLETE ===\n")
 
     def draw_grid(self):
         glDisable(GL_DEPTH_TEST)
@@ -403,6 +437,9 @@ class EditorRenderer:
         self.viewport_y = self.viewport.y
         self.viewport_width = self.viewport.width
         self.viewport_height = self.viewport.height
+
+    def resizeGL(self, w, h):
+        glViewport(0, 0, w, h)
 
 
     

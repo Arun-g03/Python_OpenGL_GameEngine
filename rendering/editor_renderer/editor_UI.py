@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (QApplication, QMainWindow, QDockWidget,
                                  QWidget, QVBoxLayout, QLabel, QListWidget,
-                                 QTextEdit, QFileSystemModel, QTreeView, QPushButton, QMenu, QFormLayout, QHBoxLayout, QLineEdit)
+                                 QTextEdit, QFileSystemModel, QTreeView, QPushButton, QMenu, QFormLayout, QHBoxLayout, QLineEdit, QMessageBox, QToolTip, QCheckBox)
 from PySide6.QtCore import Qt, QDir, QTimer, QTime
 from PySide6.QtGui import QAction
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
@@ -11,11 +11,18 @@ import math
 import numpy as np
 from .editor_camera import EditorCamera
 from rendering.texture_loader import load_cubemap
+from rendering.rasteriser import Rasteriser
+from pyrr import Vector3, Matrix44
+from rendering.my_shaders import Material
+import os
+import pywavefront
+from PIL import Image
 
 class GLViewport(QOpenGLWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.camera = EditorCamera()
+        self.camera.pitch = -0.3  # Look down a small amount
         self.setFocusPolicy(Qt.StrongFocus)  # Enable keyboard focus
         self.last_mouse_pos = None
         self.mouse_wheel = 0
@@ -25,6 +32,9 @@ class GLViewport(QOpenGLWidget):
         self.view_type = "Lit"
         self._init_view_type_button()
         self.setAcceptDrops(True)
+        self.rasteriser = None
+        self.editor_renderer = None
+        print("GLViewport initialized")
 
     def _init_view_type_button(self):
         self.view_type_button = QPushButton(self.view_type, self)
@@ -61,20 +71,28 @@ class GLViewport(QOpenGLWidget):
             action.setChecked(view == self.view_type)
 
     def initializeGL(self):
+        print("GLViewport.initializeGL called")
         glClearColor(0.1, 0.1, 0.1, 1.0)
         glEnable(GL_DEPTH_TEST)
-        glEnable(GL_CULL_FACE)
+        glDisable(GL_CULL_FACE)
         glCullFace(GL_BACK)
-        # Load skybox cubemap
-        faces = [
-            'assets/skybox/right.png',
-            'assets/skybox/left.png',
-            'assets/skybox/top.png',
-            'assets/skybox/bottom.png',
-            'assets/skybox/front.png',
-            'assets/skybox/back.png',
-        ]
-        self.skybox_tex = load_cubemap(faces)
+        
+        self.rasteriser = Rasteriser()
+        self.skybox_tex = self.rasteriser.sky_texture
+        print("Skybox HDR texture loaded via Rasteriser")
+        
+        # Initialize the editor renderer
+        parent = self.parent()
+        print(f"Parent type: {type(parent)}")
+        if parent and hasattr(parent, "scene"):
+            print(f"Parent has scene: {parent.scene}")
+            from .editor_render import EditorRenderer
+            self.editor_renderer = EditorRenderer(parent.scene, parent)
+            self.editor_renderer.rasteriser = self.rasteriser
+            print("EditorRenderer initialized successfully")
+        else:
+            print("ERROR: Parent has no scene attribute or parent is None")
+            print(f"Parent attributes: {dir(parent) if parent else 'None'}")
 
     def paintGL(self):
         # Calculate delta time
@@ -93,22 +111,30 @@ class GLViewport(QOpenGLWidget):
         glClearColor(0.1, 0.1, 0.1, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         
-        # Set up projection matrix
+        # --- Legacy grid drawing ---
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
-        aspect = self.width() / self.height() if self.height() != 0 else 1
-        gluPerspective(60, aspect, 0.1, 1000.0)
-        
-        # Set up view matrix
+        gluPerspective(60, self.width() / self.height() if self.height() != 0 else 1, 0.1, 1000.0)
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
         self.camera.apply_view()
-        
-        # Draw grid
-        self.draw_grid()
-        
-        # Draw any other scene elements here
-        self.draw_world()
+        self.draw_grid()  # Only grid or legacy stuff here
+
+        # --- Modern mesh drawing ---
+        # DO NOT touch OpenGL matrix state here!
+        view, projection = self.camera.get_view_and_projection(self.width(), self.height())
+        scene = self.parent().scene
+        for obj in scene.objects:
+            self.rasteriser.draw_mesh(
+                mesh=obj.mesh,
+                position=obj.location,
+                rotation=obj.rotation,
+                scale=obj.scale,
+                material=obj.material,
+                view=view,
+                projection=projection,
+                camera_pos=Vector3(self.camera.pos)
+            )
 
     def resizeGL(self, w, h):
         glViewport(0, 0, w, h)
@@ -190,63 +216,25 @@ class GLViewport(QOpenGLWidget):
         
         glDisable(GL_BLEND)
 
+    #Wrapper for the renderer's draw_world
     def draw_world(self):
-        # Render the skybox
-        self.draw_skybox()
-        # (Add other world rendering here)
-        pass
+        if self.editor_renderer is not None:
+            print("GLViewport.draw_world: Calling editor_renderer.draw_world()")
+            self.editor_renderer.draw_world()
+        else:
+            print("WARNING: editor_renderer is None in draw_world")
 
     def draw_skybox(self):
         if not self.skybox_tex:
             return
-        glDepthFunc(GL_LEQUAL)
-        glEnable(GL_TEXTURE_CUBE_MAP)
-        glBindTexture(GL_TEXTURE_CUBE_MAP, self.skybox_tex)
-        glPushMatrix()
-        # Remove translation from view matrix
-        m = np.identity(4, dtype=np.float32)
-        glGetFloatv(GL_MODELVIEW_MATRIX, m)
-        m[3][0] = 0
-        m[3][1] = 0
-        m[3][2] = 0
-        glLoadMatrixf(m)
-        size = 50.0
-        glBegin(GL_QUADS)
-        # Right
-        glTexCoord3f(1, -1, -1); glVertex3f( size, -size, -size)
-        glTexCoord3f(1, -1,  1); glVertex3f( size, -size,  size)
-        glTexCoord3f(1,  1,  1); glVertex3f( size,  size,  size)
-        glTexCoord3f(1,  1, -1); glVertex3f( size,  size, -size)
-        # Left
-        glTexCoord3f(-1, -1,  1); glVertex3f(-size, -size,  size)
-        glTexCoord3f(-1, -1, -1); glVertex3f(-size, -size, -size)
-        glTexCoord3f(-1,  1, -1); glVertex3f(-size,  size, -size)
-        glTexCoord3f(-1,  1,  1); glVertex3f(-size,  size,  size)
-        # Top
-        glTexCoord3f(-1, 1, -1); glVertex3f(-size, size, -size)
-        glTexCoord3f( 1, 1, -1); glVertex3f( size, size, -size)
-        glTexCoord3f( 1, 1,  1); glVertex3f( size, size,  size)
-        glTexCoord3f(-1, 1,  1); glVertex3f(-size, size,  size)
-        # Bottom
-        glTexCoord3f(-1, -1,  1); glVertex3f(-size, -size,  size)
-        glTexCoord3f( 1, -1,  1); glVertex3f( size, -size,  size)
-        glTexCoord3f( 1, -1, -1); glVertex3f( size, -size, -size)
-        glTexCoord3f(-1, -1, -1); glVertex3f(-size, -size, -size)
-        # Front
-        glTexCoord3f(-1, -1, -1); glVertex3f(-size, -size, -size)
-        glTexCoord3f( 1, -1, -1); glVertex3f( size, -size, -size)
-        glTexCoord3f( 1,  1, -1); glVertex3f( size,  size, -size)
-        glTexCoord3f(-1,  1, -1); glVertex3f(-size,  size, -size)
-        # Back
-        glTexCoord3f( 1, -1,  1); glVertex3f( size, -size,  size)
-        glTexCoord3f(-1, -1,  1); glVertex3f(-size, -size,  size)
-        glTexCoord3f(-1,  1,  1); glVertex3f(-size,  size,  size)
-        glTexCoord3f( 1,  1,  1); glVertex3f( size,  size,  size)
-        glEnd()
-        glPopMatrix()
-        glBindTexture(GL_TEXTURE_CUBE_MAP, 0)
-        glDisable(GL_TEXTURE_CUBE_MAP)
-        glDepthFunc(GL_LESS)
+        # Use Rasteriser's draw_sky method for HDR sky
+        if self.rasteriser:
+            # You need to pass view and projection matrices; here we use identity for demo
+            view = np.identity(4, dtype=np.float32)
+            projection = np.identity(4, dtype=np.float32)
+            self.rasteriser.draw_sky(view, projection)
+        else:
+            print("WARNING: Rasteriser not initialized for skybox drawing")
 
     def mousePressEvent(self, event):
         self.last_mouse_pos = event.position()
@@ -330,8 +318,20 @@ class GLViewport(QOpenGLWidget):
             for url in event.mimeData().urls():
                 file_path = url.toLocalFile()
                 if file_path.endswith('.obj'):
-                    # Here you would add the object to the scene
-                    self.parent().add_object_to_scene_from_file(file_path, event.position())
+                    # Convert screen position to world space using ray-plane intersection
+                    mouse_pos = (event.position().x(), event.position().y())
+                    origin, direction = self.camera.get_ray_from_mouse(mouse_pos, self.width(), self.height())
+                    
+                    # Ray-plane intersection with ground (y=0)
+                    if abs(direction[1]) > 1e-6:  # Avoid division by zero
+                        t = -origin[1] / direction[1]
+                        drop_pos = origin + t * direction
+                        # Round to nearest grid point
+                        drop_pos = [round(drop_pos[0]), 0.0, round(drop_pos[2])]
+                        self.parent().add_object_to_scene_from_file(file_path, drop_pos)
+                    else:
+                        # If ray is parallel to ground, use a default position
+                        self.parent().add_object_to_scene_from_file(file_path, [5.0, 0.0, 5.0])
             event.acceptProposedAction()
 
 class HierarchyPanel(QListWidget):
@@ -353,12 +353,24 @@ class PropertiesPanel(QWidget):
         self.rotation_edits = [QLineEdit(), QLineEdit(), QLineEdit()]
         self.scale_edits = [QLineEdit(), QLineEdit(), QLineEdit()]
 
+        # Material fields
+        self.base_color_edits = [QLineEdit(), QLineEdit(), QLineEdit()]
+        self.metallic_edit = QLineEdit()
+        self.roughness_edit = QLineEdit()
+        self.specular_edit = QLineEdit()
+        self.emissive_color_edits = [QLineEdit(), QLineEdit(), QLineEdit()]
+
         # Set up layouts for float3 fields
         self.layout.addRow("Name:", self.name_edit)
         self.layout.addRow("Type:", self.type_label)
         self.layout.addRow("Location:", self._make_row(self.location_edits))
         self.layout.addRow("Rotation:", self._make_row(self.rotation_edits))
         self.layout.addRow("Scale:", self._make_row(self.scale_edits))
+        self.layout.addRow("Base Color:", self._make_row(self.base_color_edits))
+        self.layout.addRow("Metallic:", self.metallic_edit)
+        self.layout.addRow("Roughness:", self.roughness_edit)
+        self.layout.addRow("Specular:", self.specular_edit)
+        self.layout.addRow("Emissive Color:", self._make_row(self.emissive_color_edits))
 
         # Disable editing type
         self.type_label.setStyleSheet("background: #eee; padding: 4px;")
@@ -373,6 +385,13 @@ class PropertiesPanel(QWidget):
         for i, edits in enumerate([self.location_edits, self.rotation_edits, self.scale_edits]):
             for j, edit in enumerate(edits):
                 edit.editingFinished.connect(self._make_on_vec3_changed(i, j))
+        for i, edit in enumerate(self.base_color_edits):
+            edit.editingFinished.connect(self._make_on_material_vec3_changed("base_color", i))
+        self.metallic_edit.editingFinished.connect(self._on_material_scalar_changed("metallic"))
+        self.roughness_edit.editingFinished.connect(self._on_material_scalar_changed("roughness"))
+        self.specular_edit.editingFinished.connect(self._on_material_scalar_changed("specular"))
+        for i, edit in enumerate(self.emissive_color_edits):
+            edit.editingFinished.connect(self._make_on_material_vec3_changed("emissive_color", i))
 
     def _make_row(self, edits):
         row = QHBoxLayout()
@@ -391,20 +410,55 @@ class PropertiesPanel(QWidget):
             for edits in [self.location_edits, self.rotation_edits, self.scale_edits]:
                 for edit in edits:
                     edit.setText("")
-                    edit.setEnabled(False)
-            self.name_edit.setEnabled(False)
+            for edit in self.base_color_edits + self.emissive_color_edits:
+                edit.setText("")
+            self.metallic_edit.setText("")
+            self.roughness_edit.setText("")
+            self.specular_edit.setText("")
+            self.set_fields_enabled(False)
             return
 
         self.name_edit.setText(obj.name)
         self.type_label.setText(obj.type)
+        # For location only, swap Y and Z
+        loc = obj.location
+        loc_swapped = [loc[0], loc[2], loc[1]]  # X, Z, Y
+
         for edits, values in zip(
             [self.location_edits, self.rotation_edits, self.scale_edits],
-            [obj.location, obj.rotation, obj.scale]
+            [loc_swapped, obj.rotation, obj.scale]
         ):
             for edit, value in zip(edits, values):
                 edit.setText(str(value))
                 edit.setEnabled(True)
         self.name_edit.setEnabled(True)
+
+        if hasattr(obj, "material") and obj.material:
+            mat = obj.material
+            for edit, value in zip(self.base_color_edits, mat.base_color):
+                edit.setText(str(value))
+                edit.setEnabled(True)
+            self.metallic_edit.setText(str(mat.metallic))
+            self.metallic_edit.setEnabled(True)
+            self.roughness_edit.setText(str(mat.roughness))
+            self.roughness_edit.setEnabled(True)
+            self.specular_edit.setText(str(mat.specular))
+            self.specular_edit.setEnabled(True)
+            for edit, value in zip(self.emissive_color_edits, mat.emissive_color):
+                edit.setText(str(value))
+                edit.setEnabled(True)
+        else:
+            for edit in self.base_color_edits + self.emissive_color_edits:
+                edit.setText("")
+                edit.setEnabled(False)
+            self.metallic_edit.setText("")
+            self.metallic_edit.setEnabled(False)
+            self.roughness_edit.setText("")
+            self.roughness_edit.setEnabled(False)
+            self.specular_edit.setText("")
+            self.specular_edit.setEnabled(False)
+
+        self.set_fields_enabled(True)
 
     def _on_name_changed(self):
         if self.current_obj:
@@ -414,12 +468,64 @@ class PropertiesPanel(QWidget):
         # vec_index: 0=location, 1=rotation, 2=scale
         def handler():
             if self.current_obj:
+                edit = [self.location_edits, self.rotation_edits, self.scale_edits][vec_index][comp_index]
+                text = edit.text()
                 try:
-                    value = float([self.location_edits, self.rotation_edits, self.scale_edits][vec_index][comp_index].text())
+                    value = float(text)
                     [self.current_obj.location, self.current_obj.rotation, self.current_obj.scale][vec_index][comp_index] = value
+                    edit.setToolTip("")  # Clear tooltip on valid input
                 except ValueError:
-                    pass  # Ignore invalid input
+                    # Restore previous value from the object
+                    prev_value = [self.current_obj.location, self.current_obj.rotation, self.current_obj.scale][vec_index][comp_index]
+                    QToolTip.showText(edit.mapToGlobal(edit.rect().bottomLeft()), f"'{text}' is not a valid number.", edit)
+                    edit.setText(str(prev_value))
         return handler
+
+    def _make_on_material_vec3_changed(self, attr, idx):
+        def handler():
+            if self.current_obj and hasattr(self.current_obj, "material"):
+                edit = getattr(self, f"{attr}_edits")[idx]
+                text = edit.text()
+                try:
+                    value = float(text)
+                    color = list(getattr(self.current_obj.material, attr))
+                    color[idx] = value
+                    setattr(self.current_obj.material, attr, tuple(color))
+                    edit.setToolTip("")
+                except ValueError:
+                    prev_value = getattr(self.current_obj.material, attr)[idx]
+                    QToolTip.showText(edit.mapToGlobal(edit.rect().bottomLeft()), f"'{text}' is not a valid number.", edit)
+                    edit.setText(str(prev_value))
+        return handler
+
+    def _on_material_scalar_changed(self, attr):
+        def handler():
+            if self.current_obj and hasattr(self.current_obj, "material"):
+                edit = getattr(self, f"{attr}_edit")
+                text = edit.text()
+                try:
+                    value = float(text)
+                    setattr(self.current_obj.material, attr, value)
+                    edit.setToolTip("")
+                except ValueError:
+                    prev_value = getattr(self.current_obj.material, attr)
+                    QToolTip.showText(edit.mapToGlobal(edit.rect().bottomLeft()), f"'{text}' is not a valid number.", edit)
+                    edit.setText(str(prev_value))
+        return handler
+
+    def set_fields_enabled(self, enabled):
+        # Transform fields
+        for edits in [self.location_edits, self.rotation_edits, self.scale_edits]:
+            for edit in edits:
+                edit.setEnabled(enabled)
+        # Material fields
+        for edit in self.base_color_edits + self.emissive_color_edits:
+            edit.setEnabled(enabled)
+        self.metallic_edit.setEnabled(enabled)
+        self.roughness_edit.setEnabled(enabled)
+        self.specular_edit.setEnabled(enabled)
+        # Name field
+        self.name_edit.setEnabled(enabled)
 
 class ContentBrowser(QTreeView):
     def __init__(self):
@@ -446,23 +552,180 @@ class Scene:
         return [obj.name for obj in self.objects]
 
 class SceneObject:
-    def __init__(self, name, obj_type, location=None, rotation=None, scale=None):
+    def __init__(self, name, obj_type, mesh=None, location=None, rotation=None, scale=None, material=None):
         self.name = name
         self.type = obj_type
+        self.mesh = mesh  # This will be a MeshData object
         self.location = location if location is not None else [0.0, 0.0, 0.0]
         self.rotation = rotation if rotation is not None else [0.0, 0.0, 0.0]
         self.scale = scale if scale is not None else [1.0, 1.0, 1.0]
+        self.material = material if material is not None else Material()
         # Add more properties as needed (transform, mesh, etc.)
 
-class MainEditor(QMainWindow):
-    def __init__(self):
+class MeshData:
+    def __init__(self, vertices, normals, indices, uvs=None):
+        self.vertices = vertices
+        self.normals = normals
+        self.indices = indices
+        self.uvs = uvs
+
+    @staticmethod
+    def load_obj_mesh(file_path):
+        scene = pywavefront.Wavefront(file_path, collect_faces=True, parse=True)
+        vertices = []
+        normals = []
+        indices = []
+        uvs = []
+        materials = {}
+
+        vertex_map = {}
+        for mesh in scene.mesh_list:
+            # Extract material if present
+            mat = None
+            if hasattr(mesh, 'materials') and mesh.materials:
+                mat = mesh.materials[0]  # Use the first material for now
+                materials[mesh.name] = mat
+
+            for face in mesh.faces:
+                for idx in face:
+                    v = scene.vertices[idx]
+                    key = tuple(v)
+                    if key not in vertex_map:
+                        vertex_map[key] = len(vertices) // 3
+                        vertices.extend(v[:3])
+                        if len(v) >= 6:
+                            normals.extend(v[3:6])
+                        else:
+                            normals.extend([0.0, 0.0, 0.0])
+                        if len(v) >= 8:
+                            uvs.extend(v[6:8])
+                        else:
+                            uvs.extend([0.0, 0.0])
+                    indices.append(vertex_map[key])
+
+        # Extract material properties for the first mesh/material
+        mat = next(iter(materials.values()), None)
+        if mat:
+            base_color = tuple(getattr(mat, 'diffuse', (1.0, 1.0, 1.0)))
+            # You can extract more properties as needed
+        else:
+            base_color = (1.0, 1.0, 1.0)
+
+        mesh_data = MeshData(vertices, normals, indices, uvs)
+        return mesh_data, base_color
+
+class CameraOptionsPanel(QWidget):
+    def __init__(self, viewport):
         super().__init__()
+        self.viewport = viewport
+        self.layout = QFormLayout(self)
+        # Position fields
+        self.pos_edits = [QLineEdit(), QLineEdit(), QLineEdit()]
+        pos_row = QHBoxLayout()
+        for label, edit in zip("XYZ", self.pos_edits):
+            pos_row.addWidget(QLabel(label))
+            pos_row.addWidget(edit)
+        pos_container = QWidget()
+        pos_container.setLayout(pos_row)
+        self.layout.addRow("Position:", pos_container)
+        # Pitch, Yaw, Roll fields
+        self.pitch_edit = QLineEdit()
+        self.yaw_edit = QLineEdit()
+        self.roll_edit = QLineEdit()
+        self.layout.addRow("Pitch:", self.pitch_edit)
+        self.layout.addRow("Yaw:", self.yaw_edit)
+        self.layout.addRow("Roll:", self.roll_edit)
+        # Reset button
+        self.reset_btn = QPushButton("Reset")
+        self.reset_btn.clicked.connect(self.reset_camera)
+        self.layout.addRow(self.reset_btn)
+        # Connect edits
+        for i, edit in enumerate(self.pos_edits):
+            edit.editingFinished.connect(self._make_on_pos_changed(i))
+        self.pitch_edit.editingFinished.connect(self._on_pitch_changed)
+        self.yaw_edit.editingFinished.connect(self._on_yaw_changed)
+        self.roll_edit.editingFinished.connect(self._on_roll_changed)
+        # Timer for live update
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_fields)
+        self.timer.start(100)
+        self._updating = False
+        # Store last displayed values
+        self._last_displayed = None
+
+    def reset_camera(self):
+        cam = self.viewport.camera
+        cam.pos = [0.0, 0.0, 0.0]
+        cam.pitch = 0.0
+        cam.yaw = 0.0
+        cam.roll = 0.0
+        self.update_fields()
+
+    def _make_on_pos_changed(self, idx):
+        def handler():
+            if self._updating:
+                return
+            try:
+                value = float(self.pos_edits[idx].text())
+                self.viewport.camera.pos[idx] = value
+            except ValueError:
+                pass
+        return handler
+
+    def _on_pitch_changed(self):
+        if self._updating:
+            return
+        try:
+            self.viewport.camera.pitch = float(self.pitch_edit.text())
+        except ValueError:
+            pass
+
+    def _on_yaw_changed(self):
+        if self._updating:
+            return
+        try:
+            self.viewport.camera.yaw = float(self.yaw_edit.text())
+        except ValueError:
+            pass
+
+    def _on_roll_changed(self):
+        if self._updating:
+            return
+        try:
+            self.viewport.camera.roll = float(self.roll_edit.text())
+        except ValueError:
+            pass
+
+    def update_fields(self):
+        self._updating = True
+        cam = self.viewport.camera
+        values = [
+            f"{cam.pos[0]:.4f}", f"{cam.pos[1]:.4f}", f"{cam.pos[2]:.4f}",
+            f"{cam.pitch:.4f}", f"{cam.yaw:.4f}", f"{cam.roll:.4f}"
+        ]
+        if self._last_displayed == values:
+            self._updating = False
+            return
+        for i, edit in enumerate(self.pos_edits):
+            edit.setText(values[i])
+        self.pitch_edit.setText(values[3])
+        self.yaw_edit.setText(values[4])
+        self.roll_edit.setText(values[5])
+        self._last_displayed = values
+        self._updating = False
+
+class MainEditor(QMainWindow):
+    def __init__(self, scene):
+        super().__init__()
+        print("MainEditor initializing with scene:", scene)
+        self.scene = scene
         self.setWindowTitle("3D Editor")
         self.setGeometry(100, 100, 1280, 720)
 
         # Central OpenGL viewport
         self.viewport = GLViewport(self)
         self.setCentralWidget(self.viewport)
+        print("Viewport created and set as central widget")
 
         # Hierarchy dock (left)
         self.hierarchy_dock = QDockWidget("World Outliner", self)
@@ -477,6 +740,16 @@ class MainEditor(QMainWindow):
         self.properties_dock.setWidget(self.properties_panel)
         self.properties_dock.setAllowedAreas(Qt.RightDockWidgetArea)
         self.addDockWidget(Qt.RightDockWidgetArea, self.properties_dock)
+        self.resizeDocks([self.properties_dock], [150], Qt.Horizontal)
+
+        # Camera options dock (right, below Details)
+        self.camera_options_dock = QDockWidget("Camera Options", self)
+        self.camera_options_panel = CameraOptionsPanel(self.viewport)
+        self.camera_options_dock.setWidget(self.camera_options_panel)
+        self.camera_options_dock.setAllowedAreas(Qt.RightDockWidgetArea)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.camera_options_dock)
+        self.tabifyDockWidget(self.properties_dock, self.camera_options_dock)
+        self.camera_options_dock.raise_()
 
         # Content browser dock (bottom)
         self.content_dock = QDockWidget("Content Browser", self)
@@ -498,17 +771,29 @@ class MainEditor(QMainWindow):
         self.timer.timeout.connect(self.update_viewport)
         self.timer.start(16)  # ~60 FPS
 
-        self.scene = Scene()
         self.hierarchy_panel.update_items(self.scene.get_object_names())
         self.hierarchy_panel.currentTextChanged.connect(self.on_outliner_selection)
         self.hierarchy_panel.itemDoubleClicked.connect(self.on_outliner_double_click)
+        print("MainEditor initialization complete")
 
     def update_viewport(self):
         self.viewport.update()
 
     def keyPressEvent(self, event):
+        # Forward to viewport for camera controls
         self.viewport.keyPressEvent(event)
-        super().keyPressEvent(event)
+        # Handle deletion
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+            selected_items = self.hierarchy_panel.selectedItems()
+            if selected_items:
+                name = selected_items[0].text()
+                obj = next((o for o in self.scene.objects if o.name == name), None)
+                if obj:
+                    self.remove_object(obj)
+                    self.properties_panel.set_object(None)
+                    self.hierarchy_panel.clearSelection()
+        else:
+            super().keyPressEvent(event)
 
     def add_object(self, obj):
         self.scene.add_object(obj)
@@ -522,10 +807,23 @@ class MainEditor(QMainWindow):
         self.scene.remove_object(obj)
         self.hierarchy_panel.update_items(self.scene.get_object_names())
 
-    def add_object_to_scene_from_file(self, file_path, drop_pos):
-        obj_name = file_path.split('/')[-1].split('.')[0]
-        new_obj = SceneObject(obj_name, "Mesh")
-        self.add_object(new_obj)
+    def add_object_to_scene_from_file(self, file_path, position=None):
+        from .editor_UI import MeshData, SceneObject
+        mesh, base_color = MeshData.load_obj_mesh(file_path)
+        name = os.path.basename(file_path)
+        print(f"Adding object at world-space position: {position}")  # Debug
+
+        location = position if position is not None else [0.0, 0.0, 0.0]
+
+        scene_obj = SceneObject(
+            name=name,
+            obj_type="Mesh",
+            mesh=mesh,
+            location=location,
+            material=Material(base_color=base_color)
+        )
+        self.add_object(scene_obj)
+        print("Added object to scene:", name)
 
     def on_outliner_selection(self, name):
         selected_obj = next((obj for obj in self.scene.objects if obj.name == name), None)
@@ -546,8 +844,18 @@ class MainEditor(QMainWindow):
             self.viewport.camera.yaw = 0.0     # Reset yaw (optional)
             self.viewport.update()
 
+    def get_unique_name(self, base_name):
+        names = set(obj.name for obj in self.scene.objects)
+        if base_name not in names:
+            return base_name
+        i = 1
+        while f"{base_name} ({i})" in names:
+            i += 1
+        return f"{base_name} ({i})"
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    editor = MainEditor()
+    scene = Scene()
+    editor = MainEditor(scene)
     editor.show()
     sys.exit(app.exec())

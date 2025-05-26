@@ -5,3 +5,4 @@ Pillow==10.0.0
 opencv-python==4.11.0.86
 pyside6==6.9.0
 pyrr==0.10.3 
+pywavefront==1.5.0
