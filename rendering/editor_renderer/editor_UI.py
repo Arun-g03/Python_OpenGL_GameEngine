@@ -317,20 +317,33 @@ class GLViewport(QOpenGLWidget):
         if event.mimeData().hasUrls():
             for url in event.mimeData().urls():
                 file_path = url.toLocalFile()
+                print(f"Attempting to load file: {file_path}")  # Debug log
                 if file_path.endswith('.obj'):
-                    # Convert screen position to world space using ray-plane intersection
-                    mouse_pos = (event.position().x(), event.position().y())
-                    origin, direction = self.camera.get_ray_from_mouse(mouse_pos, self.width(), self.height())
-                    
-                    # Ray-plane intersection with ground (y=0)
-                    if abs(direction[1]) > 1e-6:  # Avoid division by zero
-                        t = -origin[1] / direction[1]
-                        drop_pos = origin + t * direction
-                        # Round to nearest grid point
-                        drop_pos = [round(drop_pos[0]), 0.0, round(drop_pos[2])]
+                    try:
+                        # Convert screen position to world space using ray-plane intersection
+                        mouse_pos = (event.position().x(), event.position().y())
+                        print(f"Mouse position: {mouse_pos}")  # Debug log
+                        origin, direction = self.camera.get_ray_from_mouse(mouse_pos, self.width(), self.height())
+                        print(f"Ray origin: {origin}, direction: {direction}")  # Debug log
+                        
+                        # Ray-plane intersection with ground (y=0)
+                        if abs(direction[1]) > 1e-6:  # Avoid division by zero
+                            t = -origin[1] / direction[1]
+                            drop_pos = origin + t * direction
+                            # Round to nearest grid point
+                            drop_pos = [round(drop_pos[0]), 0.0, round(drop_pos[2])]
+                            print(f"Calculated drop position: {drop_pos}")  # Debug log
+                        else:
+                            # If ray is parallel to ground, use a default position
+                            drop_pos = [5.0, 0.0, 5.0]
+                            print(f"Using default drop position: {drop_pos}")  # Debug log
+                        
+                        # Add the object to the scene
                         self.parent().add_object_to_scene_from_file(file_path, drop_pos)
-                    else:
-                        # If ray is parallel to ground, use a default position
+                        print(f"Successfully added object to scene at {drop_pos}")  # Debug log
+                    except Exception as e:
+                        print(f"Error adding object to scene: {e}")  # Debug log
+                        # Try adding with default position if there's an error
                         self.parent().add_object_to_scene_from_file(file_path, [5.0, 0.0, 5.0])
             event.acceptProposedAction()
 
@@ -571,7 +584,55 @@ class MeshData:
 
     @staticmethod
     def load_obj_mesh(file_path):
-        scene = pywavefront.Wavefront(file_path, collect_faces=True, parse=True)
+        try:
+            # First try to load with materials
+            scene = pywavefront.Wavefront(file_path, collect_faces=True, parse=True)
+        except Exception as e:
+            print(f"Error loading with materials, falling back to basic parsing: {e}")
+            # If that fails, try loading without materials
+            try:
+                scene = pywavefront.Wavefront(file_path, collect_faces=True, parse=False)
+                # Manually parse the file to extract vertices and faces
+                with open(file_path, 'r') as f:
+                    vertices = []
+                    normals = []
+                    uvs = []
+                    faces = []
+                    for line in f:
+                        if line.startswith('v '):  # Vertex
+                            v = list(map(float, line.split()[1:4]))
+                            vertices.extend(v)
+                        elif line.startswith('vn '):  # Normal
+                            n = list(map(float, line.split()[1:4]))
+                            normals.extend(n)
+                        elif line.startswith('vt '):  # UV
+                            t = list(map(float, line.split()[1:3]))
+                            uvs.extend(t)
+                        elif line.startswith('f '):  # Face
+                            face = line.split()[1:]
+                            faces.append(face)
+                    # Triangulate faces
+                    indices = []
+                    for face in faces:
+                        if len(face) < 3:
+                            continue  # skip degenerate faces
+                        # Convert face indices to vertex indices
+                        idxs = [int(part.split('/')[0]) - 1 for part in face]
+                        # Fan triangulation
+                        for i in range(1, len(idxs) - 1):
+                            indices.extend([idxs[0], idxs[i], idxs[i + 1]])
+                    mesh_data = MeshData(
+                        vertices=vertices,
+                        normals=normals if normals else [0.0, 1.0, 0.0] * (len(vertices) // 3),
+                        indices=indices,
+                        uvs=uvs if uvs else [0.0, 0.0] * (len(vertices) // 3)
+                    )
+                    return mesh_data, (0.8, 0.8, 0.8)  # Light grey color
+            except Exception as e:
+                print(f"Error in basic parsing: {e}")
+                raise
+
+        # If we got here, we have a valid scene with materials
         vertices = []
         normals = []
         indices = []
@@ -606,10 +667,9 @@ class MeshData:
         # Extract material properties for the first mesh/material
         mat = next(iter(materials.values()), None)
         if mat:
-            base_color = tuple(getattr(mat, 'diffuse', (1.0, 1.0, 1.0)))
-            # You can extract more properties as needed
+            base_color = tuple(getattr(mat, 'diffuse', (0.8, 0.8, 0.8)))  # Light grey as fallback
         else:
-            base_color = (1.0, 1.0, 1.0)
+            base_color = (0.8, 0.8, 0.8)  # Light grey as default
 
         mesh_data = MeshData(vertices, normals, indices, uvs)
         return mesh_data, base_color

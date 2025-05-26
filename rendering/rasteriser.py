@@ -338,6 +338,7 @@ class Rasteriser:
             glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
             glBindVertexArray(0)
             self.mesh_vao_cache[mesh] = (vao, len(indices))
+            index_count = len(indices)
             print(f"Created new VAO: {vao} with {len(indices)} indices")
         else:
             vao, index_count = self.mesh_vao_cache[mesh]
