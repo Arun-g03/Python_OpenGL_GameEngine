@@ -34,6 +34,7 @@ class GLViewport(QOpenGLWidget):
         self.setAcceptDrops(True)
         self.rasteriser = None
         self.editor_renderer = None
+        self.mouse_pressed = False
         print("GLViewport initialized")
 
     def _init_view_type_button(self):
@@ -219,7 +220,7 @@ class GLViewport(QOpenGLWidget):
     #Wrapper for the renderer's draw_world
     def draw_world(self):
         if self.editor_renderer is not None:
-            print("GLViewport.draw_world: Calling editor_renderer.draw_world()")
+            
             self.editor_renderer.draw_world()
         else:
             print("WARNING: editor_renderer is None in draw_world")
@@ -237,20 +238,64 @@ class GLViewport(QOpenGLWidget):
             print("WARNING: Rasteriser not initialized for skybox drawing")
 
     def mousePressEvent(self, event):
+        print(f"[DEBUG] mousePressEvent: button={event.button()}, pos=({event.position().x()}, {event.position().y()})")
         self.last_mouse_pos = event.position()
+        self.mouse_pressed = True
+
         if event.button() == Qt.RightButton:
             self.setCursor(Qt.CrossCursor)
+        elif event.button() == Qt.LeftButton and self.editor_renderer:
+            self.makeCurrent()  # <-- Ensure OpenGL context is current
+            # Set up matrices as in paintGL
+            glMatrixMode(GL_PROJECTION)
+            glLoadIdentity()
+            gluPerspective(60, self.width() / self.height() if self.height() != 0 else 1, 0.1, 1000.0)
+            glMatrixMode(GL_MODELVIEW)
+            glLoadIdentity()
+            self.camera.apply_view()
+            print(f"[DEBUG] Calling handle_mouse_press with x={event.position().x()}, y={event.position().y()}, button={event.button()}")
+            print(f"[DEBUG] type(self.editor_renderer): {type(self.editor_renderer)}")
+            # Now call the renderer's mouse press
+            try:
+                print("[DEBUG] Entered handle_mouse_press")
+                self.editor_renderer.handle_mouse_press(
+                    event.position().x(),
+                    event.position().y(),
+                    event.button(),
+                    self.width(),
+                    self.height()
+                )
+            except Exception as e:
+                print(f"[ERROR] Exception in handle_mouse_press: {e}")
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.RightButton:
             self.setCursor(Qt.ArrowCursor)
         self.last_mouse_pos = None
+        self.mouse_pressed = False
+        
+        if self.editor_renderer:
+            self.editor_renderer.handle_mouse_release(
+                event.position().x(),
+                event.position().y(),
+                event.button()
+            )
 
     def mouseMoveEvent(self, event):
         if self.last_mouse_pos is not None:
             dx = event.position().x() - self.last_mouse_pos.x()
             dy = event.position().y() - self.last_mouse_pos.y()
-            self.camera.update(0.016, {}, dx, dy, (event.position().x(), event.position().y()), self.mouse_wheel)
+            
+            if event.buttons() & Qt.RightButton:
+                # Handle camera rotation with right mouse button
+                self.camera.update(0.016, {}, dx, dy, (event.position().x(), event.position().y()), self.mouse_wheel)
+            elif self.editor_renderer and self.mouse_pressed:
+                # Handle gizmo interaction with left mouse button
+                self.editor_renderer.handle_mouse_move(
+                    event.position().x(),
+                    event.position().y()
+                )
+            
             self.last_mouse_pos = event.position()
             self.update()
 
@@ -279,6 +324,20 @@ class GLViewport(QOpenGLWidget):
             self.keys_pressed.add('E')
         elif event.key() == Qt.Key_Q:
             self.keys_pressed.add('Q')
+        elif event.key() == Qt.Key_1:  # Translate mode
+            if self.editor_renderer:
+                self.editor_renderer.gizmo.set_transform_mode("translate")
+        elif event.key() == Qt.Key_2:  # Rotate mode
+            if self.editor_renderer:
+                self.editor_renderer.gizmo.set_transform_mode("rotate")
+        elif event.key() == Qt.Key_3:  # Scale mode
+            if self.editor_renderer:
+                self.editor_renderer.gizmo.set_transform_mode("scale")
+        elif event.key() == Qt.Key_Escape:  # Deselect object
+            if self.editor_renderer:
+                self.editor_renderer.selected_object = None
+                self.editor_renderer.gizmo.selected_axis = None
+                self.editor_renderer.gizmo.is_dragging = False
         
         self.update()
 
@@ -351,10 +410,26 @@ class HierarchyPanel(QListWidget):
     def __init__(self):
         super().__init__()
         self.addItems(["Cube", "Sphere", "Camera"])
+        self.setStyleSheet("""
+            QListWidget::item:selected {
+                background-color: #4a90e2;
+                color: white;
+            }
+            QListWidget::item {
+                padding: 4px;
+            }
+        """)
 
     def update_items(self, names):
         self.clear()
         self.addItems(names)
+
+    def highlight_item(self, name):
+        # Find and select the item with the given name
+        items = self.findItems(name, Qt.MatchExactly)
+        if items:
+            self.setCurrentItem(items[0])
+            self.scrollToItem(items[0])
 
 class PropertiesPanel(QWidget):
     def __init__(self):
@@ -392,6 +467,7 @@ class PropertiesPanel(QWidget):
 
         # Store current object
         self.current_obj = None
+        self.editor_renderer = None
 
         # Connect signals
         self.name_edit.editingFinished.connect(self._on_name_changed)
@@ -472,6 +548,8 @@ class PropertiesPanel(QWidget):
             self.specular_edit.setEnabled(False)
 
         self.set_fields_enabled(True)
+        if self.editor_renderer is not None:
+            self.editor_renderer.selected_object = obj
 
     def _on_name_changed(self):
         if self.current_obj:
@@ -870,7 +948,8 @@ class MainEditor(QMainWindow):
     def add_object_to_scene_from_file(self, file_path, position=None):
         from .editor_UI import MeshData, SceneObject
         mesh, base_color = MeshData.load_obj_mesh(file_path)
-        name = os.path.basename(file_path)
+        base_name = os.path.basename(file_path)
+        name = self.get_unique_name(base_name)  # Get a unique name for the object
         print(f"Adding object at world-space position: {position}")  # Debug
 
         location = position if position is not None else [0.0, 0.0, 0.0]
@@ -883,7 +962,7 @@ class MainEditor(QMainWindow):
             material=Material(base_color=base_color)
         )
         self.add_object(scene_obj)
-        print("Added object to scene:", name)
+        print(f"Added object to scene: {name}")
 
     def on_outliner_selection(self, name):
         selected_obj = next((obj for obj in self.scene.objects if obj.name == name), None)

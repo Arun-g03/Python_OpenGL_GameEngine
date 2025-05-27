@@ -294,19 +294,19 @@ class Rasteriser:
         glUseProgram(0)
 
     def draw_mesh(self, mesh, position, rotation, scale, material, view, projection, camera_pos):
-        print("\n=== DRAW MESH CALLED ===")
-        print(f"Mesh info:")
-        print(f"  Vertices: {len(mesh.vertices)//3}")
-        print(f"  Indices: {len(mesh.indices)}")
-        print(f"  Normals: {len(mesh.normals)//3 if mesh.normals else 0}")
-        print(f"Transform:")
-        print(f"  Position: {position}")
-        print(f"  Rotation: {rotation}")
-        print(f"  Scale: {scale}")
-        print(f"Material:")
-        print(f"  Base color: {material.base_color}")
-        print(f"  Metallic: {material.metallic}")
-        print(f"  Roughness: {material.roughness}")
+        # print("\n=== DRAW MESH CALLED ===")
+        # print(f"Mesh info:")
+        # print(f"  Vertices: {len(mesh.vertices)//3}")
+        # print(f"  Indices: {len(mesh.indices)}")
+        # print(f"  Normals: {len(mesh.normals)//3 if mesh.normals else 0}")
+        # print(f"Transform:")
+        # print(f"  Position: {position}")
+        # print(f"  Rotation: {rotation}")
+        # print(f"  Scale: {scale}")
+        # print(f"Material:")
+        # print(f"  Base color: {material.base_color}")
+        # print(f"  Metallic: {material.metallic}")
+        # print(f"  Roughness: {material.roughness}")
 
         # Cache VAO/VBO/EBO for each mesh
         if mesh not in self.mesh_vao_cache:
@@ -339,17 +339,17 @@ class Rasteriser:
             glBindVertexArray(0)
             self.mesh_vao_cache[mesh] = (vao, len(indices))
             index_count = len(indices)
-            print(f"Created new VAO: {vao} with {len(indices)} indices")
+            #print(f"Created new VAO: {vao} with {len(indices)} indices")
         else:
             vao, index_count = self.mesh_vao_cache[mesh]
-            print(f"Using cached VAO: {vao} with {index_count} indices")
+            #print(f"Using cached VAO: {vao} with {index_count} indices")
 
         # Set up model matrix (world space transformation)
         model = Matrix44.identity()
         model = model @ Matrix44.from_translation(position)  # First translate to position
         model = model @ Matrix44.from_eulers(rotation)       # Then rotate around that position
         model = model @ Matrix44.from_scale(scale)           # Finally scale
-        print(f"Model matrix:\n{model}")
+        #print(f"Model matrix:\n{model}")
 
         glUseProgram(self.shader_program)
         glBindVertexArray(vao)
@@ -373,10 +373,10 @@ class Rasteriser:
         glUniform1f(glGetUniformLocation(self.shader_program, "dirLight.intensity"), 1.0)
 
         # Draw the mesh
-        print("Drawing mesh...")
+        #print("Drawing mesh...")
         glDrawElements(GL_TRIANGLES, index_count, GL_UNSIGNED_INT, None)
         
         glDisable(GL_BLEND)
         glBindVertexArray(0)
         glUseProgram(0)
-        print("=== DRAW MESH COMPLETE ===\n")
+        #print("=== DRAW MESH COMPLETE ===\n")

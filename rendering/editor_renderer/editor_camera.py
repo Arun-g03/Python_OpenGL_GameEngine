@@ -148,18 +148,23 @@ class EditorCamera:
         )
 
         return view, projection
-    
+
     def get_view_and_projection(self, viewport_width, viewport_height):
+        """Alias for get_view_projection_matrices to maintain compatibility"""
+        return self.get_view_projection_matrices(viewport_width, viewport_height)
+
+    def get_view_matrix(self):
+        """Get the current view matrix"""
         cam_pos = Vector3(self.pos)
         forward = Vector3([
             math.cos(self.yaw) * math.cos(self.pitch),
             math.sin(self.pitch),
             math.sin(self.yaw) * math.cos(self.pitch)
         ])
+        return Matrix44.look_at(cam_pos, cam_pos + forward, Vector3([0.0, 1.0, 0.0]))
 
-        view = Matrix44.look_at(cam_pos, cam_pos + forward, Vector3([0.0, 1.0, 0.0]))
-        projection = Matrix44.perspective_projection(
+    def get_projection_matrix(self, viewport_width, viewport_height):
+        """Get the current projection matrix"""
+        return Matrix44.perspective_projection(
             60.0, viewport_width / viewport_height, 0.1, 1000.0
         )
-
-        return view, projection

@@ -21,6 +21,7 @@ from .gizmo import Gizmo
 from .ui_utils import draw_text
 from .editor_UI import MainEditor
 from .editor_camera import EditorCamera
+from PySide6.QtCore import Qt
 
 
 EDITOR_WIDTH = 32
@@ -43,6 +44,9 @@ class EditorRenderer:
         print("EditorRenderer initialized")
         self.camera = EditorCamera()
         self.gizmo = Gizmo()
+        self.selected_object = None
+        self.mouse_pressed = False
+        self.last_mouse_pos = None
         self.editor.show()
         try:
             from utils.settings import WIDTH, HEIGHT
@@ -140,6 +144,8 @@ class EditorRenderer:
         self.rasteriser = Rasteriser()
         self.use_rasteriser = False
         
+        self.last_ray_origin = None
+        self.last_ray_direction = None
 
     def update_text_textures(self):
         # Update all text textures
@@ -235,6 +241,7 @@ class EditorRenderer:
 
                 print(f"{obj.name} -> obj.location = {obj.location}")
                 
+                # Draw object
                 self.rasteriser.draw_mesh(
                     mesh=obj.mesh,
                     position=obj.location,
@@ -245,6 +252,58 @@ class EditorRenderer:
                     projection=projection,
                     camera_pos=cam_pos
                 )
+                
+                # Draw gizmo for selected object
+                if obj == self.selected_object:
+                    print(f"[GIZMO] Drawing gizmo for selected object: {obj.name}")
+                    self.gizmo.draw(obj.location, obj.rotation)
+                    
+                    # Draw selection highlight
+                    glPushMatrix()
+                    glTranslatef(*obj.location)
+                    glRotatef(math.degrees(obj.rotation[0]), 1, 0, 0)
+                    glRotatef(math.degrees(obj.rotation[1]), 0, 1, 0)
+                    glRotatef(math.degrees(obj.rotation[2]), 0, 0, 1)
+                    
+                    # Draw wireframe box
+                    glColor3f(1.0, 1.0, 0.0)  # Yellow
+                    glLineWidth(2.0)
+                    glBegin(GL_LINE_LOOP)
+                    size = 1.0
+                    glVertex3f(-size, -size, -size)
+                    glVertex3f(size, -size, -size)
+                    glVertex3f(size, size, -size)
+                    glVertex3f(-size, size, -size)
+                    glEnd()
+                    
+                    glBegin(GL_LINE_LOOP)
+                    glVertex3f(-size, -size, size)
+                    glVertex3f(size, -size, size)
+                    glVertex3f(size, size, size)
+                    glVertex3f(-size, size, size)
+                    glEnd()
+                    
+                    glBegin(GL_LINES)
+                    glVertex3f(-size, -size, -size)
+                    glVertex3f(-size, -size, size)
+                    glVertex3f(size, -size, -size)
+                    glVertex3f(size, -size, size)
+                    glVertex3f(size, size, -size)
+                    glVertex3f(size, size, size)
+                    glVertex3f(-size, size, -size)
+                    glVertex3f(-size, size, size)
+                    glEnd()
+                    
+                    glPopMatrix()
+        # Draw the last ray if available
+        if self.last_ray_origin is not None and self.last_ray_direction is not None:
+            glColor3f(1.0, 0.0, 0.0)
+            glLineWidth(2.0)
+            glBegin(GL_LINES)
+            glVertex3f(*self.last_ray_origin)
+            ray_end = self.last_ray_origin + self.last_ray_direction * 1000.0
+            glVertex3f(*ray_end)
+            glEnd()
         print("=== DRAW WORLD COMPLETE ===\n")
 
     def draw_grid(self):
@@ -312,70 +371,120 @@ class EditorRenderer:
         # Toggle rasteriser
         elif key == glfw.KEY_R:
             self.use_rasteriser = not self.use_rasteriser
+            
+        # New key handlers for transform modes
+        elif key == glfw.KEY_1:  # Translate mode
+            self.gizmo.set_transform_mode("translate")
+        elif key == glfw.KEY_2:  # Rotate mode
+            self.gizmo.set_transform_mode("rotate")
+        elif key == glfw.KEY_3:  # Scale mode
+            self.gizmo.set_transform_mode("scale")
+        elif key == glfw.KEY_ESCAPE:  # Deselect object
+            self.selected_object = None
+            self.gizmo.selected_axis = None
+            self.gizmo.is_dragging = False
 
-    def draw_entity_highlight(self, entity):
-        if not entity:
+    def handle_mouse_press(self, x, y, button, viewport_width, viewport_height):
+        if button == Qt.LeftButton:
+            self.mouse_pressed = True
+            print ("[DEBUG] left mouse button pressed")
+            
+            # First check if we're clicking on the gizmo
+            if self.selected_object and self.gizmo.handle_mouse((x, y), 0, 0, self.camera, viewport_width, viewport_height):
+                return
+
+            # Get ray from mouse position
+            ray_origin, ray_direction = self.camera.get_ray_from_mouse(
+                (x, y), viewport_width, viewport_height
+            )
+            print(f"[RAY] Origin: {ray_origin}, Direction: {ray_direction}")
+            self.last_ray_origin = ray_origin
+            self.last_ray_direction = ray_direction
+            
+            # Create intersection handler and find intersections
+            print ("[DEBUG] Creating intersection handler")
+            intersection_handler = RayIntersectionHandler()
+            print(f"[DEBUG] intersection_handler: {type(intersection_handler)}, id={id(intersection_handler)}")
+            intersection_handler.set_ray(ray_origin, ray_direction)
+            print (f"[DEBUG] Ray set using {ray_origin} and {ray_direction}")
+            print ("[DEBUG] trying to print scene.objects:")
+            print(f"[DEBUG] scene.objects: {self.editor.scene.objects}")
+            for obj in self.editor.scene.objects:
+                print(f"[DEBUG] Object: {getattr(obj, 'name', str(obj))}, mesh: {getattr(obj, 'mesh', None)}")
+            try:
+                intersections = intersection_handler.find_intersections(self.editor.scene.objects)
+            except Exception as e:
+                print(f"[ERROR] Exception in find_intersections: {e}")
+            print(f"[RAY] Intersections found: {len(intersections)}")
+            for obj, dist, point in intersections:
+                print(f"[RAY] Hit object: {obj.name}, Distance: {dist}, Point: {point}")
+            
+            if intersections:
+                # Get the closest intersection
+                closest_intersection = min(intersections, key=lambda x: x[1])
+                self.selected_object = closest_intersection[0]
+                print(f"[DEBUG] Object clicked: {self.selected_object.name}")
+                
+                # Update properties panel
+                if hasattr(self.editor, 'properties_panel'):
+                    self.editor.properties_panel.set_object(self.selected_object)
+                
+                # Update hierarchy panel selection
+                if hasattr(self.editor, 'hierarchy_panel'):
+                    self.editor.hierarchy_panel.highlight_item(self.selected_object.name)
+            else:
+                self.selected_object = None
+                if hasattr(self.editor, 'properties_panel'):
+                    self.editor.properties_panel.set_object(None)
+                if hasattr(self.editor, 'hierarchy_panel'):
+                    self.editor.hierarchy_panel.clearSelection()
+
+    def handle_mouse_release(self, x, y, button):
+        self.mouse_pressed = False
+        self.last_mouse_pos = None
+        self.gizmo.is_dragging = False
+
+    def handle_mouse_move(self, x, y):
+        if not self.last_mouse_pos:
+            self.last_mouse_pos = (x, y)
             return
             
-        glPushMatrix()
-        glTranslatef(*entity.position)
+        dx = x - self.last_mouse_pos[0]
+        dy = y - self.last_mouse_pos[1]
         
-        # Draw selection box
-        glColor4f(1.0, 1.0, 0.0, 0.5)  # Yellow with transparency
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        if self.mouse_pressed and self.selected_object:
+            # Handle gizmo interaction
+            if self.gizmo.selected_axis:
+                self.gizmo.is_dragging = True
+                if self.gizmo.transform_mode == "translate":
+                    movement = self.gizmo._handle_translate(dx, dy, self.camera)
+                    if movement:
+                        self.selected_object.location = [
+                            self.selected_object.location[0] + movement[0],
+                            self.selected_object.location[1] + movement[1],
+                            self.selected_object.location[2] + movement[2]
+                        ]
+                elif self.gizmo.transform_mode == "rotate":
+                    rotation = self.gizmo._handle_rotate(dx, dy, self.camera)
+                    if rotation:
+                        self.selected_object.rotation = [
+                            self.selected_object.rotation[0] + rotation[0],
+                            self.selected_object.rotation[1] + rotation[1],
+                            self.selected_object.rotation[2] + rotation[2]
+                        ]
+                elif self.gizmo.transform_mode == "scale":
+                    scale = self.gizmo._handle_scale(dx, dy, self.camera)
+                    if scale:
+                        self.selected_object.scale = [
+                            self.selected_object.scale[0] * scale[0],
+                            self.selected_object.scale[1] * scale[1],
+                            self.selected_object.scale[2] * scale[2]
+                        ]
+                # Update properties panel
+                if hasattr(self.editor, 'properties_panel'):
+                    self.editor.properties_panel.set_object(self.selected_object)
         
-        if entity.type == "cube":
-            size = entity.scale[0]
-            glBegin(GL_LINE_LOOP)
-            glVertex3f(-size/2, -size/2, -size/2)
-            glVertex3f(size/2, -size/2, -size/2)
-            glVertex3f(size/2, size/2, -size/2)
-            glVertex3f(-size/2, size/2, -size/2)
-            glEnd()
-            
-            glBegin(GL_LINE_LOOP)
-            glVertex3f(-size/2, -size/2, size/2)
-            glVertex3f(size/2, -size/2, size/2)
-            glVertex3f(size/2, size/2, size/2)
-            glVertex3f(-size/2, size/2, size/2)
-            glEnd()
-            
-            glBegin(GL_LINES)
-            glVertex3f(-size/2, -size/2, -size/2)
-            glVertex3f(-size/2, -size/2, size/2)
-            glVertex3f(size/2, -size/2, -size/2)
-            glVertex3f(size/2, -size/2, size/2)
-            glVertex3f(size/2, size/2, -size/2)
-            glVertex3f(size/2, size/2, size/2)
-            glVertex3f(-size/2, size/2, -size/2)
-            glVertex3f(-size/2, size/2, size/2)
-            glEnd()
-            
-        elif entity.type == "sphere":
-            radius = entity.scale[0]
-            # Draw three circles for sphere highlight
-            for i in range(3):
-                glBegin(GL_LINE_LOOP)
-                for angle in range(0, 360, 10):
-                    rad = math.radians(angle)
-                    if i == 0:  # XY plane
-                        x = radius * math.cos(rad)
-                        y = radius * math.sin(rad)
-                        z = 0
-                    elif i == 1:  # XZ plane
-                        x = radius * math.cos(rad)
-                        y = 0
-                        z = radius * math.sin(rad)
-                    else:  # YZ plane
-                        x = 0
-                        y = radius * math.cos(rad)
-                        z = radius * math.sin(rad)
-                    glVertex3f(x, y, z)
-                glEnd()
-        
-        glDisable(GL_BLEND)
-        glPopMatrix()
+        self.last_mouse_pos = (x, y)
 
     def draw_placement_preview(self, position):
         # Implementation for placement preview
@@ -440,6 +549,181 @@ class EditorRenderer:
 
     def resizeGL(self, w, h):
         glViewport(0, 0, w, h)
+
+
+class RayIntersectionHandler:
+    def __init__(self):
+        try:
+            print ("\n\n")
+            print("[INTERSECT] RayIntersectionHandler constructed")
+            self.ray_origin = None
+            self.ray_direction = None 
+            self.intersections = []
+        except Exception as e:
+            print(f"Error initializing RayIntersectionHandler: {e}")
+            raise
+        
+    def set_ray(self, origin, direction):
+        self.ray_origin = Vector3(origin)
+        self.ray_direction = Vector3(direction)
+        
+    def transform_ray_to_object_space(self, obj):
+        """Transform ray from world space to object space"""
+        try:
+            # Create transformation matrices
+            translation = Matrix44.from_translation(Vector3(obj.location))
+            rotation = Matrix44.from_eulers(Vector3(obj.rotation))
+            scale = Matrix44.from_scale(Vector3(obj.scale))
+            
+            # Combine transformations
+            obj_matrix = translation * rotation * scale
+            inv_matrix = obj_matrix.inverse
+            
+            # Transform ray points to homogeneous coordinates
+            ray_origin_h = np.array([*self.ray_origin, 1.0], dtype=np.float32)
+            ray_end_h = np.array([*(self.ray_origin + self.ray_direction * 1000.0), 1.0], dtype=np.float32)
+            
+            # Transform points using matrix multiplication
+            ray_origin_obj_h = np.dot(inv_matrix, ray_origin_h)
+            ray_end_obj_h = np.dot(inv_matrix, ray_end_h)
+            
+            # Convert back to 3D vectors and normalize
+            # Use numpy operations for division to avoid pyrr matrix operations
+            ray_origin_obj = Vector3(np.array(ray_origin_obj_h[:3]) / ray_origin_obj_h[3])
+            ray_end_obj = Vector3(np.array(ray_end_obj_h[:3]) / ray_end_obj_h[3])
+            print(f"[INTERSECT]   ray_origin_obj: {ray_origin_obj}, ray_end_obj: {ray_end_obj}")
+            direction_vec = Vector3(ray_end_obj - ray_origin_obj)
+            print(f"[INTERSECT]   direction_vec: {direction_vec}, length: {direction_vec.length}")
+            if direction_vec.length == 0:
+                print("[INTERSECT]   Zero-length ray direction in object space! Skipping object.")
+                return ray_origin_obj, None, obj_matrix
+            ray_dir_obj = direction_vec.normalized
+            
+            print(f"[INTERSECT]   Ray in object space: origin={ray_origin_obj}, dir={ray_dir_obj}")
+            
+            return ray_origin_obj, ray_dir_obj, obj_matrix
+            
+        except Exception as e:
+            print(f"Error in transform_ray_to_object_space: {e}")
+            import traceback
+            traceback.print_exc()
+            return None, None, None
+        
+    def test_triangle_intersection(self, v0, v1, v2, ray_origin, ray_dir):
+        """Test ray-triangle intersection using Möller–Trumbore algorithm"""
+        try:
+            # Ensure all inputs are Vector3
+            v0 = Vector3(v0)
+            v1 = Vector3(v1)
+            v2 = Vector3(v2)
+            ray_origin = Vector3(ray_origin)
+            ray_dir = Vector3(ray_dir)
+            
+            edge1 = v1 - v0
+            edge2 = v2 - v0
+            h = ray_dir.cross(edge2)
+            a = edge1.dot(h)
+            
+            if abs(a) < 1e-6:  # Ray is parallel to triangle
+                return None
+                
+            f = 1.0 / a
+            s = ray_origin - v0
+            u = f * s.dot(h)
+            
+            if u < 0.0 or u > 1.0:
+                return None
+                
+            q = s.cross(edge1)
+            v = f * ray_dir.dot(q)
+            
+            if v < 0.0 or u + v > 1.0:
+                return None
+                
+            t = f * edge2.dot(q)
+            
+            if t > 1e-6:  # Intersection found
+                return t
+                
+            return None
+        except Exception as e:
+            print(f"[INTERSECT] Error in test_triangle_intersection: {e}")
+            return None
+        
+    def transform_intersection_to_world_space(self, intersection_obj, obj_matrix):
+        """Transform intersection point from object space back to world space"""
+        try:
+            # Convert intersection point to homogeneous coordinates
+            intersection_h = np.array([*intersection_obj, 1.0], dtype=np.float32)
+            
+            # Transform using matrix multiplication
+            intersection_world_h = np.dot(obj_matrix, intersection_h)
+            
+            # Convert back to 3D vector, handling perspective division
+            if abs(intersection_world_h[3]) > 1e-6:  # Avoid division by zero
+                intersection_world = Vector3([
+                    intersection_world_h[0] / intersection_world_h[3],
+                    intersection_world_h[1] / intersection_world_h[3],
+                    intersection_world_h[2] / intersection_world_h[3]
+                ])
+            else:
+                intersection_world = Vector3([
+                    intersection_world_h[0],
+                    intersection_world_h[1],
+                    intersection_world_h[2]
+                ])
+                
+            return intersection_world
+        except Exception as e:
+            print(f"[INTERSECT] Error in transform_intersection_to_world_space: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+        
+    def find_intersections(self, objects):
+        print("[INTERSECT] find_intersections CALLED")
+        self.intersections = []
+        print("[INTERSECT] Starting intersection tests...")
+        for obj in objects:
+            print(f"[INTERSECT] Checking object: {getattr(obj, 'name', str(obj))}")
+            if not obj.mesh:
+                print("[INTERSECT]   No mesh, skipping.")
+                continue
+            try:
+                # Transform ray to object space
+                ray_origin_obj, ray_dir_obj, obj_matrix = self.transform_ray_to_object_space(obj)
+                print(f"[INTERSECT]   Ray in object space: origin={ray_origin_obj}, dir={ray_dir_obj}")
+                vertices = obj.mesh.vertices
+                indices = obj.mesh.indices
+                print(f"[INTERSECT]   Mesh vertices: {len(vertices)//3}, indices: {len(indices)}")
+                found = False
+                for i in range(0, len(indices), 3):
+                    # Extract vertex positions as Vector3
+                    v0 = Vector3(vertices[indices[i]*3:indices[i]*3+3])
+                    v1 = Vector3(vertices[indices[i+1]*3:indices[i+1]*3+3])
+                    v2 = Vector3(vertices[indices[i+2]*3:indices[i+2]*3+3])
+                    
+                    t = self.test_triangle_intersection(v0, v1, v2, ray_origin_obj, ray_dir_obj)
+                    if t is not None:
+                        intersection_obj = ray_origin_obj + ray_dir_obj * t
+                        intersection = self.transform_intersection_to_world_space(intersection_obj, obj_matrix)
+                        dist = (intersection - self.ray_origin).length
+                        self.intersections.append((obj, dist, intersection))
+                        found = True
+                        print(f"[INTERSECT]   Found intersection at distance {dist}")
+                if found:
+                    print(f"[INTERSECT]   Intersection found for object: {getattr(obj, 'name', str(obj))}")
+                else:
+                    print(f"[INTERSECT]   No intersection for object: {getattr(obj, 'name', str(obj))}")
+            except Exception as e:
+                print(f"[INTERSECT]   Error testing object {getattr(obj, 'name', str(obj))}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+        print(f"[INTERSECT] Total intersections found: {len(self.intersections)}")
+        # Sort intersections by distance
+        self.intersections.sort(key=lambda x: x[1])
+        return self.intersections
 
 
     
