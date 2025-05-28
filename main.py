@@ -8,15 +8,21 @@ from utils.logger import logger
 from player.player import Player
 from rendering.rasteriser import Rasteriser
 from world.map import game_map
+
 from enemies.enemy import Enemy
 from rendering.texture_loader import load_texture
 from rendering.pause_menu import PauseMenu
 from rendering.main_menu import MainMenu
-from rendering.editor_render import EditorRenderer
+from rendering.editor_renderer.editor_render import EditorRenderer
 from rendering.game_render import GameRenderer
 from utils.input import GameState, set_game_state, get_game_state, get_mouse_position, get_mouse_delta
 import math
 from utils import input
+from PySide6.QtWidgets import QApplication
+from rendering.editor_renderer.editor_UI import MainEditor, Scene
+import sys
+
+print("Starting system")
 
 def init_glfw():
     if not glfw.init():
@@ -34,10 +40,11 @@ def init_glfw():
     glfw.make_context_current(window)
     
     # Set up OpenGL
-    glViewport(0, 0, WIDTH, HEIGHT)
+    width, height = glfw.get_framebuffer_size(window)
+    glViewport(0, 0, width, height)
     glMatrixMode(GL_PROJECTION)
     glLoadIdentity()
-    gluPerspective(60, WIDTH / HEIGHT, 0.1, RENDER_DISTANCE)
+    gluPerspective(60.0, width / height, 0.1, 1000.0)
     glMatrixMode(GL_MODELVIEW)
     glLoadIdentity()
     glEnable(GL_DEPTH_TEST)
@@ -56,7 +63,16 @@ def init_glfw():
     glfw.set_mouse_button_callback(window, input.mouse_button_callback)
     glfw.set_cursor_pos_callback(window, input.cursor_position_callback)
     
+    # Register framebuffer size callback
+    glfw.set_framebuffer_size_callback(window, framebuffer_size_callback)
+    
     return window
+
+def framebuffer_size_callback(window, width, height):
+    glViewport(0, 0, width, height)
+    EditorRenderer.window_width = width
+    EditorRenderer.window_height = height
+    EditorRenderer.resize_ui()
 
 def main():
     window = init_glfw()
@@ -83,7 +99,9 @@ def main():
         main_menu = MainMenu()
         pause_menu = PauseMenu()
         game_renderer = GameRenderer(player, game_map, floor_texture)
-        editor_renderer = EditorRenderer()
+        scene = Scene()
+        editor = MainEditor(scene)
+        renderer = EditorRenderer(scene, editor)
         
         def transition_to_game():
             try:
@@ -150,7 +168,7 @@ def main():
                     game_renderer.update(delta_time)
                     game_renderer.render(delta_time)
                 elif current_state == GameState.EDITOR:
-                    editor_renderer.render(delta_time, input.keys, *get_mouse_delta(), get_mouse_position())
+                    editor.render(delta_time, input.keys, *get_mouse_delta(), get_mouse_position())
                 elif current_state == GameState.PAUSED:
                     game_renderer.render(delta_time)  # Render game in background
                     pause_menu.draw()
@@ -174,5 +192,9 @@ def main():
     finally:
         glfw.terminate()
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    scene = Scene()
+    app = QApplication(sys.argv)
+    editor = MainEditor(scene)
+    editor.show()
+    sys.exit(app.exec())

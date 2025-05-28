@@ -198,3 +198,7 @@ def was_delete_block_pressed():
         delete_block_pressed = False
         return True
     return False
+
+def was_mouse_clicked():
+    """Detect one-frame left mouse click (for UI selection)."""
+    return was_mouse_pressed(glfw.MOUSE_BUTTON_LEFT)

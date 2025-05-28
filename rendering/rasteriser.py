@@ -7,6 +7,7 @@ from rendering.my_shaders import SKY_VERTEX_SHADER_SRC, SKY_FRAGMENT_SHADER_SRC,
 
 from PIL import Image
 import cv2
+import weakref
     
 
 class Rasteriser:
@@ -19,6 +20,7 @@ class Rasteriser:
         self.sky_shader = compile_shader_program(SKY_VERTEX_SHADER_SRC, SKY_FRAGMENT_SHADER_SRC)
         self.floor_texture = None
         self.build_floor_mesh()
+        self.mesh_vao_cache = weakref.WeakKeyDictionary()  # Cache for mesh VAOs
 
     def create_cube_geometry(self):
         # Position + Normal per vertex
@@ -290,3 +292,91 @@ class Rasteriser:
         glDepthMask(GL_TRUE)
         glBindVertexArray(0)
         glUseProgram(0)
+
+    def draw_mesh(self, mesh, position, rotation, scale, material, view, projection, camera_pos):
+        # print("\n=== DRAW MESH CALLED ===")
+        # print(f"Mesh info:")
+        # print(f"  Vertices: {len(mesh.vertices)//3}")
+        # print(f"  Indices: {len(mesh.indices)}")
+        # print(f"  Normals: {len(mesh.normals)//3 if mesh.normals else 0}")
+        # print(f"Transform:")
+        # print(f"  Position: {position}")
+        # print(f"  Rotation: {rotation}")
+        # print(f"  Scale: {scale}")
+        # print(f"Material:")
+        # print(f"  Base color: {material.base_color}")
+        # print(f"  Metallic: {material.metallic}")
+        # print(f"  Roughness: {material.roughness}")
+
+        # Cache VAO/VBO/EBO for each mesh
+        if mesh not in self.mesh_vao_cache:
+            print("Creating new VAO/VBO/EBO for mesh")
+            vao = glGenVertexArrays(1)
+            vbo = glGenBuffers(1)
+            ebo = glGenBuffers(1)
+            glBindVertexArray(vao)
+            
+            # Vertices
+            vertices = np.array(mesh.vertices, dtype=np.float32)
+            glBindBuffer(GL_ARRAY_BUFFER, vbo)
+            glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
+            glEnableVertexAttribArray(0)
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, ctypes.c_void_p(0))
+            
+            # Normals (optional)
+            if mesh.normals:
+                normals = np.array(mesh.normals, dtype=np.float32)
+                nbo = glGenBuffers(1)
+                glBindBuffer(GL_ARRAY_BUFFER, nbo)
+                glBufferData(GL_ARRAY_BUFFER, normals.nbytes, normals, GL_STATIC_DRAW)
+                glEnableVertexAttribArray(1)
+                glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, ctypes.c_void_p(0))
+            
+            # Indices
+            indices = np.array(mesh.indices, dtype=np.uint32)
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo)
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.nbytes, indices, GL_STATIC_DRAW)
+            glBindVertexArray(0)
+            self.mesh_vao_cache[mesh] = (vao, len(indices))
+            index_count = len(indices)
+            #print(f"Created new VAO: {vao} with {len(indices)} indices")
+        else:
+            vao, index_count = self.mesh_vao_cache[mesh]
+            #print(f"Using cached VAO: {vao} with {index_count} indices")
+
+        # Set up model matrix (world space transformation)
+        model = Matrix44.identity()
+        model = model @ Matrix44.from_translation(position)  # First translate to position
+        model = model @ Matrix44.from_eulers(rotation)       # Then rotate around that position
+        model = model @ Matrix44.from_scale(scale)           # Finally scale
+        #print(f"Model matrix:\n{model}")
+
+        glUseProgram(self.shader_program)
+        glBindVertexArray(vao)
+
+        # Set all required uniforms
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "model"), 1, GL_FALSE, model.astype('float32'))
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "view"), 1, GL_FALSE, view.astype('float32'))
+        glUniformMatrix4fv(glGetUniformLocation(self.shader_program, "projection"), 1, GL_FALSE, projection.astype('float32'))
+        glUniform3fv(glGetUniformLocation(self.shader_program, "viewPos"), 1, camera_pos.astype('float32'))
+
+        # Set material properties
+        glUniform3fv(glGetUniformLocation(self.shader_program, "baseColor"), 1, np.array(material.base_color, dtype=np.float32))
+        glUniform3fv(glGetUniformLocation(self.shader_program, "emissiveColor"), 1, np.array(material.emissive_color, dtype=np.float32))
+        glUniform1f(glGetUniformLocation(self.shader_program, "metallic"), material.metallic)
+        glUniform1f(glGetUniformLocation(self.shader_program, "roughness"), material.roughness)
+        glUniform1f(glGetUniformLocation(self.shader_program, "specular"), material.specular)
+
+        # Set lighting (in world space)
+        glUniform3f(glGetUniformLocation(self.shader_program, "dirLight.direction"), -0.5, -1.0, -0.5)
+        glUniform3f(glGetUniformLocation(self.shader_program, "dirLight.color"), 1.0, 1.0, 1.0)
+        glUniform1f(glGetUniformLocation(self.shader_program, "dirLight.intensity"), 1.0)
+
+        # Draw the mesh
+        #print("Drawing mesh...")
+        glDrawElements(GL_TRIANGLES, index_count, GL_UNSIGNED_INT, None)
+        
+        glDisable(GL_BLEND)
+        glBindVertexArray(0)
+        glUseProgram(0)
+        #print("=== DRAW MESH COMPLETE ===\n")
