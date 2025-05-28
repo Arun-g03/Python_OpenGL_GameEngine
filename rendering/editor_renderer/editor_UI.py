@@ -90,7 +90,9 @@ class GLViewport(QOpenGLWidget):
             from .editor_render import EditorRenderer
             self.editor_renderer = EditorRenderer(parent.scene, parent)
             self.editor_renderer.rasteriser = self.rasteriser
+            self.editor_renderer.camera = self.camera  # Share the camera instance
             print("EditorRenderer initialized successfully")
+            print(f"EditorRenderer attributes: {dir(self.editor_renderer)}")
         else:
             print("ERROR: Parent has no scene attribute or parent is None")
             print(f"Parent attributes: {dir(parent) if parent else 'None'}")
@@ -136,6 +138,11 @@ class GLViewport(QOpenGLWidget):
                 projection=projection,
                 camera_pos=Vector3(self.camera.pos)
             )
+
+        # Call draw_world to handle gizmo and other editor-specific rendering
+        #print("[DEBUG] About to call draw_world")
+        self.draw_world()
+        #print("[DEBUG] Finished draw_world")
 
     def resizeGL(self, w, h):
         glViewport(0, 0, w, h)
@@ -220,6 +227,7 @@ class GLViewport(QOpenGLWidget):
     #Wrapper for the renderer's draw_world
     def draw_world(self):
         if self.editor_renderer is not None:
+            #print(f"[DEBUG] Calling draw_world")
             
             self.editor_renderer.draw_world()
         else:
@@ -238,14 +246,13 @@ class GLViewport(QOpenGLWidget):
             print("WARNING: Rasteriser not initialized for skybox drawing")
 
     def mousePressEvent(self, event):
-        print(f"[DEBUG] mousePressEvent: button={event.button()}, pos=({event.position().x()}, {event.position().y()})")
         self.last_mouse_pos = event.position()
         self.mouse_pressed = True
 
         if event.button() == Qt.RightButton:
             self.setCursor(Qt.CrossCursor)
         elif event.button() == Qt.LeftButton and self.editor_renderer:
-            self.makeCurrent()  # <-- Ensure OpenGL context is current
+            self.makeCurrent()  # Ensure OpenGL context is current
             # Set up matrices as in paintGL
             glMatrixMode(GL_PROJECTION)
             glLoadIdentity()
@@ -253,20 +260,31 @@ class GLViewport(QOpenGLWidget):
             glMatrixMode(GL_MODELVIEW)
             glLoadIdentity()
             self.camera.apply_view()
-            print(f"[DEBUG] Calling handle_mouse_press with x={event.position().x()}, y={event.position().y()}, button={event.button()}")
-            print(f"[DEBUG] type(self.editor_renderer): {type(self.editor_renderer)}")
-            # Now call the renderer's mouse press
-            try:
-                print("[DEBUG] Entered handle_mouse_press")
-                self.editor_renderer.handle_mouse_press(
+            
+            # Convert mouse coordinates to viewport space
+            viewport_x = event.position().x() - self.editor_renderer.viewport_x
+            viewport_y = event.position().y() - self.editor_renderer.viewport_y
+            
+            # Check if click is within viewport bounds
+            if (0 <= viewport_x < self.editor_renderer.viewport_width and 
+                0 <= viewport_y < self.editor_renderer.viewport_height):
+                
+                # Set mouse state in gizmo
+                if self.editor_renderer.gizmo:
+                    self.editor_renderer.gizmo.mouse_pressed = True
+                
+                # Call the renderer's mouse press and check if gizmo was clicked
+                corrected_y = self.height() - event.position().y()
+                gizmo_clicked = self.editor_renderer.handle_mouse_press(
                     event.position().x(),
-                    event.position().y(),
+                    corrected_y,
                     event.button(),
                     self.width(),
                     self.height()
                 )
-            except Exception as e:
-                print(f"[ERROR] Exception in handle_mouse_press: {e}")
+                # Only update if gizmo was clicked or object was selected
+                if gizmo_clicked or self.editor_renderer.selected_object:
+                    self.update()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.RightButton:
@@ -275,11 +293,17 @@ class GLViewport(QOpenGLWidget):
         self.mouse_pressed = False
         
         if self.editor_renderer:
+            # Reset gizmo mouse state
+            if self.editor_renderer.gizmo:
+                self.editor_renderer.gizmo.mouse_pressed = False
+                self.editor_renderer.gizmo.is_dragging = False
+            
             self.editor_renderer.handle_mouse_release(
                 event.position().x(),
                 event.position().y(),
                 event.button()
             )
+            self.update()
 
     def mouseMoveEvent(self, event):
         if self.last_mouse_pos is not None:
@@ -289,15 +313,33 @@ class GLViewport(QOpenGLWidget):
             if event.buttons() & Qt.RightButton:
                 # Handle camera rotation with right mouse button
                 self.camera.update(0.016, {}, dx, dy, (event.position().x(), event.position().y()), self.mouse_wheel)
-            elif self.editor_renderer and self.mouse_pressed:
-                # Handle gizmo interaction with left mouse button
-                self.editor_renderer.handle_mouse_move(
-                    event.position().x(),
-                    event.position().y()
-                )
+                self.update()
+            elif self.editor_renderer:
+                # Always check for gizmo hover state
+                if self.editor_renderer.selected_object:
+                    # Convert mouse coordinates to viewport space
+                    viewport_x = event.position().x() - self.editor_renderer.viewport_x
+                    viewport_y = event.position().y() - self.editor_renderer.viewport_y
+                    
+                    # Check if mouse is within viewport bounds
+                    if (0 <= viewport_x < self.editor_renderer.viewport_width and 
+                        0 <= viewport_y < self.editor_renderer.viewport_height):
+                        # Update gizmo hover state
+                        self.editor_renderer.gizmo.handle_mouse(
+                            (viewport_x, viewport_y), dx, dy, self.camera,
+                            self.editor_renderer.viewport_width, self.editor_renderer.viewport_height
+                        )
+                        self.update()
+                
+                # Handle gizmo dragging if active
+                if self.mouse_pressed and self.editor_renderer.gizmo.is_dragging:
+                    self.editor_renderer.handle_mouse_move(
+                        event.position().x(),
+                        event.position().y()
+                    )
+                    self.update()
             
             self.last_mouse_pos = event.position()
-            self.update()
 
     def wheelEvent(self, event):
         self.mouse_wheel = event.angleDelta().y() / 120
@@ -394,7 +436,7 @@ class GLViewport(QOpenGLWidget):
                             print(f"Calculated drop position: {drop_pos}")  # Debug log
                         else:
                             # If ray is parallel to ground, use a default position
-                            drop_pos = [5.0, 0.0, 5.0]
+                            drop_pos = [0.0, 0.0, 0.0]
                             print(f"Using default drop position: {drop_pos}")  # Debug log
                         
                         # Add the object to the scene
@@ -513,9 +555,14 @@ class PropertiesPanel(QWidget):
         loc = obj.location
         loc_swapped = [loc[0], loc[2], loc[1]]  # X, Z, Y
 
+        # Limit to 5 decimal places
+        loc_swapped = [f"{v:.5f}" for v in loc_swapped]
+        rot = [f"{v:.5f}" for v in obj.rotation]
+        scale = [f"{v:.5f}" for v in obj.scale]
+
         for edits, values in zip(
             [self.location_edits, self.rotation_edits, self.scale_edits],
-            [loc_swapped, obj.rotation, obj.scale]
+            [loc_swapped, rot, scale]
         ):
             for edit, value in zip(edits, values):
                 edit.setText(str(value))
@@ -967,6 +1014,10 @@ class MainEditor(QMainWindow):
     def on_outliner_selection(self, name):
         selected_obj = next((obj for obj in self.scene.objects if obj.name == name), None)
         self.properties_panel.set_object(selected_obj)
+        if hasattr(self.viewport, "editor_renderer") and self.viewport.editor_renderer:
+            self.viewport.editor_renderer.selected_object = selected_obj
+            self.viewport.editor_renderer.camera.selected_object = selected_obj
+            self.viewport.update()  # Ensure the viewport redraws to show the gizmo/highlight
 
     def on_outliner_double_click(self, item):
         name = item.text()

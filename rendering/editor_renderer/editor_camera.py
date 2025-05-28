@@ -29,6 +29,7 @@ class EditorCamera:
         self.placement_normal = None
         self.fly_mode = True  # Always fly mode
         self.last_mouse_pos = None
+        self.selected_object = None  # Add selected_object property
 
     def update(self, dt, keys, mouse_dx, mouse_dy, mouse_pos, mouse_wheel=0):
         # Speed control

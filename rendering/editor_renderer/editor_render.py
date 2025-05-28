@@ -193,7 +193,6 @@ class EditorRenderer:
         self.editor.update_viewport()
 
     def draw_world(self):
-        print("\n=== DRAW WORLD CALLED ===")
         if not hasattr(self, "rasteriser") or self.rasteriser is None:
             print("ERROR: No rasteriser available")
             return
@@ -202,9 +201,7 @@ class EditorRenderer:
             print("ERROR: No scene available")
             return
             
-        print(f"Scene objects count: {len(self.editor.scene.objects)}")
         if len(self.editor.scene.objects) == 0:
-            print("WARNING: Scene is empty")
             return
             
         # Get camera position and matrices
@@ -217,30 +214,9 @@ class EditorRenderer:
         view = Matrix44.look_at(cam_pos, cam_pos + look_dir, Vector3([0, 1, 0]))
         projection = Matrix44.perspective_projection(60, self.viewport_width / self.viewport_height, 0.1, 1000.0)
 
-        print(f"Camera position: {cam_pos}")
-        print(f"View matrix:\n{view}")
-        print(f"Projection matrix:\n{projection}")
-
-        # Draw sky first
-        print("Drawing sky...")
-        #self.rasteriser.draw_sky(view, projection)
-
-        
         # Draw all scene objects
-        print("\nDrawing scene objects:")
         for obj in self.editor.scene.objects:
-            print(f"\nObject: {obj.name}")
-            print(f"  Type: {obj.type}")
-            print(f"  Position: {obj.location}")
-            print(f"  Has mesh: {obj.mesh is not None}")
             if obj.mesh:
-                print(f"  Mesh vertices: {len(obj.mesh.vertices)//3}")
-                print(f"  Mesh indices: {len(obj.mesh.indices)}")
-                print(f"  Mesh normals: {len(obj.mesh.normals)//3 if obj.mesh.normals else 0}")
-                print(f"  Material: {obj.material}")
-
-                print(f"{obj.name} -> obj.location = {obj.location}")
-                
                 # Draw object
                 self.rasteriser.draw_mesh(
                     mesh=obj.mesh,
@@ -255,8 +231,28 @@ class EditorRenderer:
                 
                 # Draw gizmo for selected object
                 if obj == self.selected_object:
-                    print(f"[GIZMO] Drawing gizmo for selected object: {obj.name}")
-                    self.gizmo.draw(obj.location, obj.rotation)
+                    # Save current OpenGL state
+                    glPushAttrib(GL_ALL_ATTRIB_BITS)
+                    glPushMatrix()
+                    
+                    # Set viewport for gizmo
+                    glViewport(self.viewport_x, self.viewport_y, self.viewport_width, self.viewport_height)
+                    
+                    # Set up matrices for gizmo
+                    glMatrixMode(GL_PROJECTION)
+                    glLoadMatrixf(projection.tolist())
+                    glMatrixMode(GL_MODELVIEW)
+                    glLoadMatrixf(view.tolist())
+                    
+                    # Draw gizmo at mesh center
+                    center = get_mesh_center(obj.mesh)
+                    gizmo_pos = np.array(obj.location) + center
+                    self.gizmo.selected_object = obj
+                    self.gizmo.draw(gizmo_pos, obj.rotation)
+                    
+                    # Restore OpenGL state
+                    glPopMatrix()
+                    glPopAttrib()
                     
                     # Draw selection highlight
                     glPushMatrix()
@@ -295,16 +291,6 @@ class EditorRenderer:
                     glEnd()
                     
                     glPopMatrix()
-        # Draw the last ray if available
-        if self.last_ray_origin is not None and self.last_ray_direction is not None:
-            glColor3f(1.0, 0.0, 0.0)
-            glLineWidth(2.0)
-            glBegin(GL_LINES)
-            glVertex3f(*self.last_ray_origin)
-            ray_end = self.last_ray_origin + self.last_ray_direction * 1000.0
-            glVertex3f(*ray_end)
-            glEnd()
-        print("=== DRAW WORLD COMPLETE ===\n")
 
     def draw_grid(self):
         glDisable(GL_DEPTH_TEST)
@@ -387,62 +373,64 @@ class EditorRenderer:
     def handle_mouse_press(self, x, y, button, viewport_width, viewport_height):
         if button == Qt.LeftButton:
             self.mouse_pressed = True
-            print ("[DEBUG] left mouse button pressed")
+            print(f"[GIZMO] Mouse press at ({x}, {y})")
             
-            # First check if we're clicking on the gizmo
-            if self.selected_object and self.gizmo.handle_mouse((x, y), 0, 0, self.camera, viewport_width, viewport_height):
-                return
+            # Convert mouse coordinates to viewport space
+            viewport_x = x - self.viewport_x
+            viewport_y = y - self.viewport_y
+            
+            # Check if click is within viewport bounds
+            if (0 <= viewport_x < self.viewport_width and 
+                0 <= viewport_y < self.viewport_height):
+                
+                # First check if we're clicking on the gizmo
+                if self.selected_object:
+                    print(f"[GIZMO] Testing gizmo interaction for selected object: {self.selected_object.name}")
+                    # Set selected object on camera for gizmo interaction
+                    self.camera.selected_object = self.selected_object
+                    if self.gizmo.handle_mouse((viewport_x, viewport_y), 0, 0, self.camera, self.viewport_width, self.viewport_height):
+                        print("[GIZMO] Gizmo interaction detected")
+                        return True
 
-            # Get ray from mouse position
-            ray_origin, ray_direction = self.camera.get_ray_from_mouse(
-                (x, y), viewport_width, viewport_height
-            )
-            print(f"[RAY] Origin: {ray_origin}, Direction: {ray_direction}")
-            self.last_ray_origin = ray_origin
-            self.last_ray_direction = ray_direction
-            
-            # Create intersection handler and find intersections
-            print ("[DEBUG] Creating intersection handler")
-            intersection_handler = RayIntersectionHandler()
-            print(f"[DEBUG] intersection_handler: {type(intersection_handler)}, id={id(intersection_handler)}")
-            intersection_handler.set_ray(ray_origin, ray_direction)
-            print (f"[DEBUG] Ray set using {ray_origin} and {ray_direction}")
-            print ("[DEBUG] trying to print scene.objects:")
-            print(f"[DEBUG] scene.objects: {self.editor.scene.objects}")
-            for obj in self.editor.scene.objects:
-                print(f"[DEBUG] Object: {getattr(obj, 'name', str(obj))}, mesh: {getattr(obj, 'mesh', None)}")
-            try:
+                # If not interacting with gizmo, try object selection
+                ray_origin, ray_direction = self.camera.get_ray_from_mouse(
+                    (viewport_x, viewport_y), self.viewport_width, self.viewport_height
+                )
+                
+                intersection_handler = RayIntersectionHandler()
+                intersection_handler.set_ray(ray_origin, ray_direction)
                 intersections = intersection_handler.find_intersections(self.editor.scene.objects)
-            except Exception as e:
-                print(f"[ERROR] Exception in find_intersections: {e}")
-            print(f"[RAY] Intersections found: {len(intersections)}")
-            for obj, dist, point in intersections:
-                print(f"[RAY] Hit object: {obj.name}, Distance: {dist}, Point: {point}")
-            
-            if intersections:
-                # Get the closest intersection
-                closest_intersection = min(intersections, key=lambda x: x[1])
-                self.selected_object = closest_intersection[0]
-                print(f"[DEBUG] Object clicked: {self.selected_object.name}")
                 
-                # Update properties panel
-                if hasattr(self.editor, 'properties_panel'):
-                    self.editor.properties_panel.set_object(self.selected_object)
-                
-                # Update hierarchy panel selection
-                if hasattr(self.editor, 'hierarchy_panel'):
-                    self.editor.hierarchy_panel.highlight_item(self.selected_object.name)
-            else:
-                self.selected_object = None
-                if hasattr(self.editor, 'properties_panel'):
-                    self.editor.properties_panel.set_object(None)
-                if hasattr(self.editor, 'hierarchy_panel'):
-                    self.editor.hierarchy_panel.clearSelection()
+                if intersections:
+                    closest_intersection = min(intersections, key=lambda x: x[1])
+                    self.selected_object = closest_intersection[0]
+                    # Set selected object on camera for gizmo interaction
+                    self.camera.selected_object = self.selected_object
+                    print(f"[GIZMO] Selected object: {self.selected_object.name}")
+                    
+                    # Update properties panel
+                    if hasattr(self.editor, 'properties_panel'):
+                        self.editor.properties_panel.set_object(self.selected_object)
+                    
+                    # Update hierarchy panel selection
+                    if hasattr(self.editor, 'hierarchy_panel'):
+                        self.editor.hierarchy_panel.highlight_item(self.selected_object.name)
+                    return True
+                else:
+                    self.selected_object = None
+                    self.camera.selected_object = None
+                    if hasattr(self.editor, 'properties_panel'):
+                        self.editor.properties_panel.set_object(None)
+                    if hasattr(self.editor, 'hierarchy_panel'):
+                        self.editor.hierarchy_panel.clearSelection()
+            return False
 
     def handle_mouse_release(self, x, y, button):
+        print("[GIZMO] Mouse release")
         self.mouse_pressed = False
         self.last_mouse_pos = None
         self.gizmo.is_dragging = False
+        self.gizmo.selected_axis = None
 
     def handle_mouse_move(self, x, y):
         if not self.last_mouse_pos:
@@ -452,37 +440,50 @@ class EditorRenderer:
         dx = x - self.last_mouse_pos[0]
         dy = y - self.last_mouse_pos[1]
         
-        if self.mouse_pressed and self.selected_object:
+        if self.mouse_pressed and self.selected_object and self.gizmo.is_dragging:
+            print(f"[GIZMO] Mouse move: dx={dx}, dy={dy}")
             # Handle gizmo interaction
             if self.gizmo.selected_axis:
-                self.gizmo.is_dragging = True
+                print(f"[GIZMO] Handling gizmo interaction on axis: {self.gizmo.selected_axis}")
+                
                 if self.gizmo.transform_mode == "translate":
                     movement = self.gizmo._handle_translate(dx, dy, self.camera)
-                    if movement:
+                    if movement is not None and np.any(np.array(movement) != 0):
+                        print(f"[GIZMO] Translation movement: {movement}")
                         self.selected_object.location = [
                             self.selected_object.location[0] + movement[0],
                             self.selected_object.location[1] + movement[1],
                             self.selected_object.location[2] + movement[2]
                         ]
+                        # Update properties panel
+                        if hasattr(self.editor, 'properties_panel'):
+                            self.editor.properties_panel.set_object(self.selected_object)
+                            
                 elif self.gizmo.transform_mode == "rotate":
                     rotation = self.gizmo._handle_rotate(dx, dy, self.camera)
-                    if rotation:
+                    if rotation is not None and np.any(np.array(rotation) != 0):
+                        print(f"[GIZMO] Rotation: {rotation}")
                         self.selected_object.rotation = [
                             self.selected_object.rotation[0] + rotation[0],
                             self.selected_object.rotation[1] + rotation[1],
                             self.selected_object.rotation[2] + rotation[2]
                         ]
+                        # Update properties panel
+                        if hasattr(self.editor, 'properties_panel'):
+                            self.editor.properties_panel.set_object(self.selected_object)
+                            
                 elif self.gizmo.transform_mode == "scale":
                     scale = self.gizmo._handle_scale(dx, dy, self.camera)
-                    if scale:
+                    if scale is not None and np.any(np.array(scale) != 1):
+                        print(f"[GIZMO] Scale: {scale}")
                         self.selected_object.scale = [
                             self.selected_object.scale[0] * scale[0],
                             self.selected_object.scale[1] * scale[1],
                             self.selected_object.scale[2] * scale[2]
                         ]
-                # Update properties panel
-                if hasattr(self.editor, 'properties_panel'):
-                    self.editor.properties_panel.set_object(self.selected_object)
+                        # Update properties panel
+                        if hasattr(self.editor, 'properties_panel'):
+                            self.editor.properties_panel.set_object(self.selected_object)
         
         self.last_mouse_pos = (x, y)
 
@@ -724,6 +725,12 @@ class RayIntersectionHandler:
         # Sort intersections by distance
         self.intersections.sort(key=lambda x: x[1])
         return self.intersections
+
+
+def get_mesh_center(mesh):
+    vertices = np.array(mesh.vertices).reshape(-1, 3)
+    center = vertices.mean(axis=0)
+    return center
 
 
     
